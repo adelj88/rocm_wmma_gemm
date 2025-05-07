@@ -33,6 +33,16 @@ namespace rocm_wmma_gemm
 template<m_layout layout_C, m_layout layout_A, m_layout layout_B>
 __host__ void gemm(half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
 
+template<m_layout layout_C, m_layout layout_A, m_layout layout_B>
+__host__ void gemm(half*        C,
+                   half*        A,
+                   half*        B,
+                   size_t       M,
+                   size_t       N,
+                   size_t       K,
+                   size_t       batch_count,
+                   hipStream_t& stream);
+
 extern template __host__ void gemm<m_layout::row_major, m_layout::col_major, m_layout::col_major>(
     half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
 
@@ -56,6 +66,86 @@ extern template __host__ void gemm<m_layout::col_major, m_layout::col_major, m_l
 
 extern template __host__ void gemm<m_layout::col_major, m_layout::row_major, m_layout::row_major>(
     half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::row_major, m_layout::col_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::row_major, m_layout::row_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::row_major, m_layout::col_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::row_major, m_layout::row_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::col_major, m_layout::col_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::col_major, m_layout::row_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::col_major, m_layout::col_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+extern template __host__ void
+    gemm<m_layout::col_major, m_layout::row_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
 
 } // namespace rocm_wmma_gemm
 

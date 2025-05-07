@@ -40,6 +40,16 @@ void cleanup_rocblas();
 template<bool TRANSPOSE_A, bool TRANSPOSE_B>
 __host__ void gemm(half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
 
+template<bool TRANSPOSE_A, bool TRANSPOSE_B>
+__host__ void gemm(half*        C,
+                   half*        A,
+                   half*        B,
+                   size_t       M,
+                   size_t       N,
+                   size_t       K,
+                   size_t       batch_count,
+                   hipStream_t& stream);
+
 extern template __host__ void
     gemm<true, true>(half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
 
@@ -51,6 +61,42 @@ extern template __host__ void
 
 extern template __host__ void gemm<false, false>(
     half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
+
+extern template __host__ void gemm<true, true>(half*        C,
+                                               half*        A,
+                                               half*        B,
+                                               size_t       M,
+                                               size_t       N,
+                                               size_t       K,
+                                               size_t       batch_count,
+                                               hipStream_t& stream);
+
+extern template __host__ void gemm<true, false>(half*        C,
+                                                half*        A,
+                                                half*        B,
+                                                size_t       M,
+                                                size_t       N,
+                                                size_t       K,
+                                                size_t       batch_count,
+                                                hipStream_t& stream);
+
+extern template __host__ void gemm<false, true>(half*        C,
+                                                half*        A,
+                                                half*        B,
+                                                size_t       M,
+                                                size_t       N,
+                                                size_t       K,
+                                                size_t       batch_count,
+                                                hipStream_t& stream);
+
+extern template __host__ void gemm<false, false>(half*        C,
+                                                 half*        A,
+                                                 half*        B,
+                                                 size_t       M,
+                                                 size_t       N,
+                                                 size_t       K,
+                                                 size_t       batch_count,
+                                                 hipStream_t& stream);
 
 } // namespace rocblas_wrapper
 

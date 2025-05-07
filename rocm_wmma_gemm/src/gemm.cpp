@@ -8,6 +8,12 @@ namespace rocm_wmma_gemm
 template<m_layout layout_C, m_layout layout_A, m_layout layout_B>
 __host__ void gemm(half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream)
 {
+    gemm<layout_C, layout_A, layout_B>(C, A, B, M, N, K, 1, stream);
+}
+
+template<m_layout layout_C, m_layout layout_A, m_layout layout_B>
+__host__ void gemm(half* C, half* A, half* B, size_t M, size_t N, size_t K, size_t batch_count, hipStream_t& stream)
+{
     int warps_m     = 4;
     int warps_n     = 4;
     int warp_tile_m = 4;
@@ -48,7 +54,7 @@ __host__ void gemm(half* C, half* A, half* B, size_t M, size_t N, size_t K, hipS
     int grid_n       = (N + block_n - 1) / block_n;
     int total_blocks = grid_m * grid_n;
 
-    dim3 grid_dim(total_blocks);
+    dim3 grid_dim(total_blocks, batch_count);
     dim3 block_dim(warp_size * total_warps);
 
     if(!(layout_A == m_layout::row_major && layout_B == m_layout::col_major) && M <= 1024
@@ -100,5 +106,85 @@ template __host__ void gemm<m_layout::col_major, m_layout::col_major, m_layout::
 
 template __host__ void gemm<m_layout::col_major, m_layout::row_major, m_layout::row_major>(
     half* C, half* A, half* B, size_t M, size_t N, size_t K, hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::row_major, m_layout::col_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::row_major, m_layout::row_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::row_major, m_layout::col_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::row_major, m_layout::row_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::col_major, m_layout::col_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::col_major, m_layout::row_major, m_layout::col_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::col_major, m_layout::col_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
+
+template __host__ void
+    gemm<m_layout::col_major, m_layout::row_major, m_layout::row_major>(half*        C,
+                                                                        half*        A,
+                                                                        half*        B,
+                                                                        size_t       M,
+                                                                        size_t       N,
+                                                                        size_t       K,
+                                                                        size_t       batch_count,
+                                                                        hipStream_t& stream);
 
 } // namespace rocm_wmma_gemm

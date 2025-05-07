@@ -29,7 +29,7 @@
 #include <iomanip>
 
 template<m_layout a_layout, m_layout b_layout, m_layout c_layout>
-void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
+void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t batch_count)
 {
     // Allocate memory on host using std::vector
     matrix<half, a_layout> h_A(M, K);
@@ -46,13 +46,22 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
 
     // Allocate memory on device
     half *d_A, *d_B, *d_C;
-    HIP_CHECK(hipMalloc(&d_A, h_A.size() * sizeof(half)));
-    HIP_CHECK(hipMalloc(&d_B, h_B.size() * sizeof(half)));
-    HIP_CHECK(hipMalloc(&d_C, h_C.size() * sizeof(half)));
+    HIP_CHECK(hipMalloc(&d_A, h_A.size() * batch_count * sizeof(half)));
+    HIP_CHECK(hipMalloc(&d_B, h_B.size() * batch_count * sizeof(half)));
+    HIP_CHECK(hipMalloc(&d_C, h_C.size() * batch_count * sizeof(half)));
 
     // Copy data from host to device
-    HIP_CHECK(hipMemcpy(d_A, h_A.data(), h_A.size() * sizeof(half), hipMemcpyHostToDevice));
-    HIP_CHECK(hipMemcpy(d_B, h_B.data(), h_B.size() * sizeof(half), hipMemcpyHostToDevice));
+    for(int i = 0; i < batch_count; ++i)
+    {
+        HIP_CHECK(hipMemcpy(d_A + i * h_A.size(),
+                            h_A.data(),
+                            h_A.size() * sizeof(half),
+                            hipMemcpyHostToDevice));
+        HIP_CHECK(hipMemcpy(d_B + i * h_B.size(),
+                            h_B.data(),
+                            h_B.size() * sizeof(half),
+                            hipMemcpyHostToDevice));
+    }
     HIP_CHECK(hipDeviceSynchronize());
 
     gpu_timer timer;
@@ -68,13 +77,15 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
                                                                               M,
                                                                               N,
                                                                               K,
+                                                                              batch_count,
                                                                               stream);
         HIP_CHECK(hipPeekAtLastError());
     }
     HIP_CHECK(hipDeviceSynchronize());
 
     double total_tflops = 0.0;
-    double total_flops  = 2.0 * M * N * K; // 2 operations per element (multiply and add)
+    double total_flops
+        = 2.0 * M * N * K * batch_count; // 2 operations per element (multiply and add)
 
     for(auto _ : state)
     {
@@ -87,6 +98,7 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
                                                                               M,
                                                                               N,
                                                                               K,
+                                                                              batch_count,
                                                                               stream);
         HIP_CHECK(hipPeekAtLastError());
         float elapsed_time = timer.stop(stream);
@@ -101,6 +113,7 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
     state.counters["TFLOPS"] = total_tflops / state.iterations();
     state.SetBytesProcessed(state.iterations() * ((M * K) + (K * N) + (M * N)) * sizeof(half));
 
+    HIP_CHECK(hipDeviceSynchronize());
     // Free device memory and destroy stream
     HIP_CHECK(hipStreamDestroy(stream));
     HIP_CHECK(hipFree(d_A));
@@ -113,7 +126,8 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K)
                                  run_benchmark<LA, LB, LC>,                                    \
                                  M,                                                            \
                                  N,                                                            \
-                                 K)
+                                 K,                                                            \
+                                 batch_count)
 
 #define BENCHMARK_SIZE(lA, lB, lC)                      \
     CREATE_BENCHMARK(lA, lB, lC, 1024, 1024, 1024),     \
@@ -125,7 +139,8 @@ int main(int argc, char* argv[])
 {
     // Parse argv
     benchmark::Initialize(&argc, argv);
-    int trials = -1;
+    int trials      = -1;
+    int batch_count = 1;
 
     std::vector<benchmark::internal::Benchmark*> benchmarks
         = {BENCHMARK_SIZE(m_layout::col_major, m_layout::col_major, m_layout::col_major),

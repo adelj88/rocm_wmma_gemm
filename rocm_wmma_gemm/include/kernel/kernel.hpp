@@ -76,6 +76,10 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
 
     const int cid = tid % half_block;
 
+    A += blockIdx.y * M * K;
+    B += blockIdx.y * K * N;
+    C += blockIdx.y * M * N;
+
     const T* A_base = A + block_row * ((LAYOUT_A == m_layout::col_major) ? 1 : K);
     const T* B_base = B + block_col * ((LAYOUT_B == m_layout::col_major) ? K : 1);
 

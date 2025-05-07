@@ -46,8 +46,8 @@ class fragment
 public:
     using underlying_type = T;
     using type            = typename type_selector<T>::type;
-    typedef type frag_vec __attribute__((ext_vector_type(TILE)));
-    using value_type = type;
+    using frag_vec        = type __attribute__((ext_vector_type(TILE)));
+    using value_type      = type;
 
 private:
     frag_vec _fragment = {};
@@ -61,21 +61,21 @@ public:
         friend class iterator;
 
     public:
-        __device__ proxy(frag_vec& v, int i) : vec_ref(v), index(i) {}
+        __device__ __forceinline__ proxy(frag_vec& v, int i) : vec_ref(v), index(i) {}
 
-        __device__ proxy& operator=(type value)
+        __device__ __forceinline__ proxy& operator=(type value)
         {
             vec_ref[index] = value;
             return *this;
         }
 
-        __device__ proxy& operator=(const T& value)
+        __device__ __forceinline__ proxy& operator=(const T& value)
         {
             vec_ref[index] = static_cast<type>(value);
             return *this;
         }
 
-        __device__ operator type() const
+        __device__ __forceinline__ operator type() const
         {
             return vec_ref[index];
         }
@@ -92,61 +92,61 @@ public:
 
         friend class fragment<T, TILE>;
 
-        __device__ iterator(frag_vec& v, int i) : vec_ref(v), current_index(i) {}
+        __device__ __forceinline__ iterator(frag_vec& v, int i) : vec_ref(v), current_index(i) {}
 
     public:
-        __device__ proxy operator*() const
+        __device__ __forceinline__ proxy operator*() const
         {
             return proxy(vec_ref, current_index);
         }
 
-        __device__ iterator& operator++()
+        __device__ __forceinline__ iterator& operator++()
         {
             ++current_index;
             return *this;
         }
 
-        __device__ iterator& operator+=(int n)
+        __device__ __forceinline__ iterator& operator+=(int n)
         {
             current_index += n;
             return *this;
         }
 
-        __device__ iterator operator+(int n) const
+        __device__ __forceinline__ iterator operator+(int n) const
         {
             iterator temp = *this;
             temp += n;
             return temp;
         }
 
-        __device__ bool operator!=(const iterator& other) const
+        __device__ __forceinline__ bool operator!=(const iterator& other) const
         {
             return current_index != other.current_index;
         }
     };
 
 public:
-    __device__ iterator begin()
+    __device__ __forceinline__ iterator begin()
     {
         return iterator(_fragment, 0);
     }
 
-    __device__ iterator end()
+    __device__ __forceinline__ iterator end()
     {
         return iterator(_fragment, TILE);
     }
 
-    __device__ frag_vec& get()
+    __device__ __forceinline__ frag_vec& get()
     {
         return _fragment;
     }
 
-    __device__ const frag_vec& get() const
+    __device__ __forceinline__ const frag_vec& get() const
     {
         return _fragment;
     }
 
-    __device__ type operator[](int i) const
+    __device__ __forceinline__ type operator[](int i) const
     {
         return _fragment[i];
     }
@@ -157,10 +157,13 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major),
                             void>::type
 {
-    using type = typename type_selector<T>::type;
-    typedef type vec __attribute__((ext_vector_type(TILE)));
-    const vec*   tmp = reinterpret_cast<const vec*>(data);
-    frag.get()       = *tmp;
+    constexpr int width    = (TILE * sizeof(T)) / sizeof(float4);
+    const float4* src_ptr  = reinterpret_cast<const float4*>(data);
+    float4*       dest_ptr = reinterpret_cast<float4*>(&frag.get());
+    for(int i = 0; i < width; ++i)
+    {
+        dest_ptr[i] = src_ptr[i];
+    }
 }
 
 template<m_input MATRIX, m_layout ACCESS, class T, int TILE>
@@ -194,10 +197,13 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major),
                             void>::type
 {
-    using type = typename type_selector<T>::type;
-    typedef type vec __attribute__((ext_vector_type(TILE)));
-    const vec*   tmp = reinterpret_cast<const vec*>(data);
-    frag.get()       = *tmp;
+    constexpr int width    = (TILE * sizeof(T)) / sizeof(float4);
+    const float4* src_ptr  = reinterpret_cast<const float4*>(data);
+    float4*       dest_ptr = reinterpret_cast<float4*>(&frag.get());
+    for(int i = 0; i < width; ++i)
+    {
+        dest_ptr[i] = src_ptr[i];
+    }
 }
 
 template<m_layout ACCESS, bool USE_SHARED, class T, int TILE>

@@ -167,16 +167,41 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         const T* curr_a = current_a + (warp_m_base + half_lane) * frag_mult_A;
         const T* curr_b = current_b + (warp_n_base + half_lane) * frag_mult_B;
 
-        for(int wm = 0; wm < warp_tile_m; ++wm)
+        if constexpr(warp_tile_m < warp_tile_n)
         {
-            const T* src = curr_a + wm * wmma_tile * frag_mult_A;
-            load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], src, block_m, block_k);
+            for(int wm = 0; wm < warp_tile_n; ++wm)
+            {
+                const T* src_a = curr_a + wm * wmma_tile * frag_mult_A;
+                const T* src_b = curr_b + wm * wmma_tile * frag_mult_B;
+                if(wm < warp_tile_m)
+                {
+                    load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], src_a, block_m, block_k);
+                }
+                load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], src_b, block_k, block_n);
+            }
         }
-
-        for(int wn = 0; wn < warp_tile_n; ++wn)
+        else if constexpr(warp_tile_m > warp_tile_n)
         {
-            const T* src = curr_b + wn * wmma_tile * frag_mult_B;
-            load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wn], src, block_k, block_n);
+            for(int wm = 0; wm < warp_tile_m; ++wm)
+            {
+                const T* src_a = curr_a + wm * wmma_tile * frag_mult_A;
+                const T* src_b = curr_b + wm * wmma_tile * frag_mult_B;
+                load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], src_a, block_m, block_k);
+                if(wm < warp_tile_n)
+                {
+                    load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], src_b, block_k, block_n);
+                }
+            }
+        }
+        else if constexpr(warp_tile_m == warp_tile_n)
+        {
+            for(int wm = 0; wm < warp_tile_m; ++wm)
+            {
+                const T* src_a = curr_a + wm * wmma_tile * frag_mult_A;
+                const T* src_b = curr_b + wm * wmma_tile * frag_mult_B;
+                load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], src_a, block_m, block_k);
+                load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], src_b, block_k, block_n);
+            }
         }
 
         // Compute: each warp performs WMMA on its fragments.

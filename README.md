@@ -14,6 +14,7 @@ This repository aims to:
 ### Prerequisites
 - AMD ROCm installed with HIP support
 - CMake version 3.10 or higher
+- Python3 (required for config generation)
 - AMD RDNA3/RDNA3.5/RDNA4 GPU (required for WMMA support)
 
 ### Build Steps

@@ -1,0 +1,128 @@
+{
+    "configurations": [
+        {
+            "range": {
+                "M": {
+                    "min": 1,
+                    "max": 1024
+                },
+                "N": {
+                    "min": 1,
+                    "max": 1024
+                },
+                "K": {
+                    "min": 1,
+                    "max": -1
+                }
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "any"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2
+            }
+        },
+        {
+            "range": {
+                "M": {
+                    "min": 1,
+                    "max": 1024
+                },
+                "N": {
+                    "min": 1,
+                    "max": 1024
+                },
+                "K": {
+                    "min": 1,
+                    "max": -1
+                }
+            },
+            "layout": {
+                "A": "any",
+                "B": "any",
+                "C": "any",
+                "exclude": {
+                    "A": "row_major",
+                    "B": "col_major"
+                }
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2
+            }
+        },
+        {
+            "range": {
+                "M": {
+                    "min": 1025,
+                    "max": 2048
+                },
+                "N": {
+                    "min": 1025,
+                    "max": 2048
+                },
+                "K": {
+                    "min": 1,
+                    "max": -1
+                }
+            },
+            "layout": {
+                "A": "any",
+                "B": "any",
+                "C": "any",
+                "exclude": {
+                    "combination": [
+                        {
+                            "A": "col_major",
+                            "B": "row_major"
+                        },
+                        {
+                            "A": "row_major",
+                            "B": "row_major"
+                        }
+                    ]
+                }
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2
+            }
+        },
+        {
+            "range": {
+                "M": {
+                    "min": 1,
+                    "max": -1
+                },
+                "N": {
+                    "min": 1,
+                    "max": -1
+                },
+                "K": {
+                    "min": 1,
+                    "max": -1
+                }
+            },
+            "layout": {
+                "A": "any",
+                "B": "any",
+                "C": "any"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        }
+    ]
+}

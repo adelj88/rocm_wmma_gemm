@@ -5,6 +5,10 @@ project(rocm_wmma_gemm LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Find Python 3
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+message(STATUS "Found Python: ${Python3_EXECUTABLE}")
+
 # Set a default build type if none was specified
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting build type to 'Release' as none was specified.")

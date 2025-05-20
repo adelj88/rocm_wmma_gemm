@@ -4,34 +4,18 @@ import json
 import argparse
 from pathlib import Path
 
-def generate_layout_condition(layout, exclude=None):
-    # For M,N <= 1024, we need special handling to match the original logic
-    if 'exclude' in layout:
-        exclude = layout['exclude']
-        if "combination" in exclude:
-            # For the 1024 < M,N <= 2048 case
-            subconditions = []
-            for combo in exclude["combination"]:
-                combo_conditions = [f"layout_{m} == m_layout::{l}"
-                                 for m, l in combo.items()]
-                subconditions.append(f"!({' && '.join(combo_conditions)})")
-            return f"({' && '.join(subconditions)})"
-        else:
-            # For the M,N <= 1024 case
-            blocked_layout = []
-            for matrix, layout_type in exclude.items():
-                blocked_layout.append(f"layout_{matrix} == m_layout::{layout_type}")
-            return f"!({' && '.join(blocked_layout)})"
-
-    # For specific layout requirements
+def generate_layout_condition(layout):
+    """Generate layout condition code"""
     conditions = []
+
+    # Handle basic layout requirements
     for matrix in ['A', 'B', 'C']:
         if layout.get(matrix, "any") != "any":
             conditions.append(f"layout_{matrix} == m_layout::{layout[matrix]}")
 
     if not conditions:
         return "true"
-    return ' && '.join(conditions)
+    return " && ".join(conditions)
 
 def generate_config_header(config_file, output_file):
     with open(config_file, 'r') as f:
@@ -114,38 +98,25 @@ inline gemm_params get_gemm_params(size_t M, size_t N, size_t K,
 
     # Generate conditions for each configuration
     for idx, conf in enumerate(config['configurations']):
-        range_m = conf['range']['M']
-        range_n = conf['range']['N']
+        range_info = conf['range']
         layout = conf['layout']
+        cfg = conf['config']
 
-        # Special handling for M,N <= 1024 case to match original logic
-        range_conditions = []
-        if range_m['max'] == 1024 and range_n['max'] == 1024:
-            range_conditions = [f"M <= {range_m['max']}", f"N <= {range_n['max']}"]
-        else:
-            if range_m['min'] > 1:
-                range_conditions.append(f"M >= {range_m['min']}")
-            if range_m['max'] != -1:
-                range_conditions.append(f"M <= {range_m['max']}")
-            if range_n['min'] > 1:
-                range_conditions.append(f"N >= {range_n['min']}")
-            if range_n['max'] != -1:
-                range_conditions.append(f"N <= {range_n['max']}")
+        # Generate size condition
+        size_conditions = []
+        for dim, val in range_info.items():
+            size_conditions.append(f"{dim} == {val}")
 
         # Generate layout condition
-        layout_condition = generate_layout_condition(layout)
+        layout_conditions = []
+        for matrix in ['A', 'B', 'C']:
+            if layout.get(matrix, "any") != "any":
+                layout_conditions.append(f"layout_{matrix} == m_layout::{layout[matrix]}")
 
-        # Combine conditions to match original style
-        if layout_condition != "true":
-            if range_conditions:
-                condition_str = f"({layout_condition}) && {' && '.join(range_conditions)}"
-            else:
-                condition_str = layout_condition
-        else:
-            condition_str = ' && '.join(range_conditions) if range_conditions else "true"
-
-        if condition_str != "true":
-            cfg = conf['config']
+        # Combine conditions
+        conditions = size_conditions + layout_conditions
+        if conditions:
+            condition_str = ' && '.join(conditions)
             config_tuple = (cfg['warps_m'], cfg['warps_n'],
                           cfg['warp_tile_m'], cfg['warp_tile_n'])
             config_idx = unique_configs.index(config_tuple)

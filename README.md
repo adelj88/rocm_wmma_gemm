@@ -46,6 +46,19 @@ Run the executable after building:
 ./benchmark/rocblas_bench
 ```
 
+### Tuning
+The GEMM implementation includes a tuning system to find optimal configurations (warps and tile sizes) for specific matrix dimensions and layouts. The tuner:
+- Tests various combinations of warp and tile configurations
+- Supports different matrix layouts (row-major and column-major)
+- Generates a JSON configuration file used by the library
+- Measures actual performance for each configuration
+
+To run the tuner:
+```bash
+cd build
+python3 tune.py  # Results written to gemm_config_tuned.json
+```
+
 ## Performance Results
 - [View detailed square matrix benchmarks](docs/square.md)
 - [View detailed rectangular matrix benchmarks](docs/rectangle.md)
@@ -54,9 +67,8 @@ Run the executable after building:
 1. Add batched implementation for half GEMM
 2. Add BF16 implementation
 3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
-4. Proper tuning for different sizes
-5. Tuning for RDNA3.5 and RDNA4
-6. (Maybe) Simplify interface by using leading dimensions, similar to BLAS libraries
+4. Tuning for RDNA3.5 and RDNA4
+5. (Maybe) Simplify interface by using leading dimensions, similar to BLAS libraries
 
 ## License
 

@@ -2,6 +2,7 @@
 
 import subprocess
 import json
+import re
 
 # Matrix sizes to test (M, N, K)
 sizes = [
@@ -21,6 +22,82 @@ sizes = [
     (65536, 2048, 2048),
 ]
 
+def parse_benchmark_name(name):
+    """Parse benchmark name to extract configuration parameters"""
+    # Pattern: config_WM_WN_TM_TN_AB_C where:
+    # - WM, WN, TM, TN are integers
+    # - AB is layout for A and B (rr, rc, cr, cc for row/col combinations)
+    # - C is layout for C (r or c)
+
+    pattern = r'config_(\d+)_(\d+)_(\d+)_(\d+)_([rc][rc])_([rc])'
+    match = re.match(pattern, name)
+
+    if not match:
+        return None
+
+    warps_m = int(match.group(1))
+    warps_n = int(match.group(2))
+    warp_tile_m = int(match.group(3))
+    warp_tile_n = int(match.group(4))
+    layout_ab = match.group(5)
+    layout_c = match.group(6)
+
+    # Convert layout codes to names
+    layout_map = {'r': 'row_major', 'c': 'col_major'}
+    layout_a = layout_map[layout_ab[0]]
+    layout_b = layout_map[layout_ab[1]]
+    layout_c = layout_map[layout_c]
+
+    return {
+        'warps_m': warps_m,
+        'warps_n': warps_n,
+        'warp_tile_m': warp_tile_m,
+        'warp_tile_n': warp_tile_n,
+        'layout_a': layout_a,
+        'layout_b': layout_b,
+        'layout_c': layout_c
+    }
+
+def parse_benchmark_output(output):
+    """Parse benchmark output in console format"""
+    results = {}
+    best_times = {}  # Track best time for each layout
+    lines = output.split('\n')
+
+    # Skip header lines until we find the dashed line before results
+    for i, line in enumerate(lines):
+        if line.startswith('-----'):
+            # Results start after this line
+            results_lines = lines[i+2:]  # Skip the header line
+            break
+
+    for line in results_lines:
+        if not line.strip():  # Skip empty lines
+            continue
+
+        # Split line by variable whitespace
+        parts = line.split()
+        if len(parts) < 4:  # Skip invalid lines
+            continue
+
+        # Parse benchmark name and time
+        name = parts[0]
+        time_ms = float(parts[1])  # Already in ms
+
+        config = parse_benchmark_name(name)
+        if config:
+            layout_key = f"{config['layout_a']}_{config['layout_b']}_{config['layout_c']}"
+
+            # Only update if this is a better (faster) time
+            if layout_key not in best_times or time_ms < best_times[layout_key]:
+                best_times[layout_key] = time_ms
+                results[layout_key] = {
+                    "config": config,
+                    "avg_time_ms": time_ms
+                }
+
+    return results
+
 def run_tuning():
     """Run tuner and collect results"""
     results = {}
@@ -38,47 +115,36 @@ def run_tuning():
                 check=True
             )
 
-            # Parse results
-            for line in result.stdout.splitlines():
-                if not line.startswith(str(M)):  # Skip non-data lines
-                    continue
+            benchmark_results = parse_benchmark_output(result.stdout)
 
-                vals = line.strip().split(',')
-                if len(vals) != 12:
-                    continue
-
-                config = {
-                    "warps_m": int(vals[3]),
-                    "warps_n": int(vals[4]),
-                    "warp_tile_m": int(vals[5]),
-                    "warp_tile_n": int(vals[6])
+            # Process results
+            for layout_key, bench_result in benchmark_results.items():
+                time_ms = bench_result["avg_time_ms"]
+                results[size_key][layout_key] = {
+                    "M": M,
+                    "N": N,
+                    "K": K,
+                    "config": bench_result["config"],
+                    "layout": {
+                        "A": bench_result["config"]["layout_a"],
+                        "B": bench_result["config"]["layout_b"],
+                        "C": bench_result["config"]["layout_c"]
+                    },
+                    "avg_time_ms": time_ms
                 }
-
-                layouts = {
-                    "A": vals[7],
-                    "B": vals[8],
-                    "C": vals[9]
-                }
-
-                layout_key = f"{vals[7]}_{vals[8]}_{vals[9]}"
-                avg_time_ms = float(vals[10])
-
-                # Store only if this is the best configuration for this size and layout
-                if layout_key not in results[size_key] or avg_time_ms < results[size_key][layout_key]["avg_time_ms"]:
-                    results[size_key][layout_key] = {
-                        "M": M,
-                        "N": N,
-                        "K": K,
-                        "config": config,
-                        "layout": layouts,
-                        "avg_time_ms": avg_time_ms
-                    }
-                    print(f"New best for {size_key} {layout_key}: {config} ({avg_time_ms:.3f} ms)")
+                print(f"Result for {size_key} {layout_key}: "
+                      f"{bench_result['config']['warps_m']},"
+                      f"{bench_result['config']['warps_n']},"
+                      f"{bench_result['config']['warp_tile_m']},"
+                      f"{bench_result['config']['warp_tile_n']} "
+                      f"({time_ms:.3f} ms)")
 
         except subprocess.CalledProcessError as e:
             print(f"Error testing size {size_key}:")
             print(f"stdout: {e.stdout}")
             print(f"stderr: {e.stderr}")
+        except Exception as e:
+            print(f"Unexpected error for size {size_key}: {e}")
 
     return results
 
@@ -102,19 +168,36 @@ def generate_json_config(results):
 
     return {"configurations": configs}
 
+def print_csv_summary(results):
+    """Print results in CSV format similar to original tuner"""
+    print("\n" + "="*80)
+    print("SUMMARY (CSV FORMAT):")
+    print("="*80)
+    print("M,N,K,warps_m,warps_n,warp_tile_m,warp_tile_n,layout_a,layout_b,layout_c,avg_time_ms")
+
+    for size_results in results.values():
+        for result in size_results.values():
+            print(f"{result['M']},{result['N']},{result['K']},"
+                  f"{result['config']['warps_m']},{result['config']['warps_n']},"
+                  f"{result['config']['warp_tile_m']},{result['config']['warp_tile_n']},"
+                  f"{result['layout']['A']},{result['layout']['B']},{result['layout']['C']},"
+                  f"{result['avg_time_ms']:.3f}")
+
 def main():
-    print("Running tuning...")
+    print("Running tuning with Google Benchmark...")
     results = run_tuning()
+
+    if not results:
+        print("No results collected!")
+        return
 
     print("\nGenerating configuration...")
     config = generate_json_config(results)
 
     # Print summary
-    print("\nBest configurations:")
-    for cfg in config["configurations"]:
-        print(f"M={cfg['range']['M']}, N={cfg['range']['N']}, K={cfg['range']['K']}")
-        print(f"Layout: {cfg['layout']}")
-        print(f"Config: {cfg['config']}\n")
+    print_csv_summary(results)
+
+    print(f"\nBest configurations found: {len(config['configurations'])}")
 
     with open("gemm_config_tuned.json", "w") as f:
         json.dump(config, f, indent=2)

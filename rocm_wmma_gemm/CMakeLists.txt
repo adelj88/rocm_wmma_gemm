@@ -51,7 +51,7 @@ target_include_directories(tuner PUBLIC
 )
 
 # Link HIP libraries
-target_link_libraries(tuner PUBLIC ${HIP_LIBRARIES})
+target_link_libraries(tuner PUBLIC ${HIP_LIBRARIES} benchmark::benchmark)
 
 # Add optimization flags
 target_compile_options(tuner PRIVATE

@@ -1,9 +1,32 @@
-#include <array>
-#include <chrono>
-#include <gemm.hpp>
+/*
+ * MIT License
+ *
+ * Copyright (c) 2024 Adel Johar
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include <benchmark/benchmark.h>
 #include <hip/hip_runtime.h>
 #include <iostream>
 #include <kernel/kernel.hpp>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -53,113 +76,219 @@ private:
     hipEvent_t start_, stop_;
 };
 
-#define RUN_CONFIG(WM, WN, TM, TN)                                                                \
-    do                                                                                            \
-    {                                                                                             \
-        int  block_m      = WM * TM * wmma_tile;                                                  \
-        int  block_n      = WN * TN * wmma_tile;                                                  \
-        int  grid_m       = (M + block_m - 1) / block_m;                                          \
-        int  grid_n       = (N + block_n - 1) / block_n;                                          \
-        int  total_blocks = grid_m * grid_n;                                                      \
-        dim3 grid_dim(total_blocks, 1);                                                           \
-        dim3 block_dim(warp_size* WM* WN);                                                        \
-                                                                                                  \
-        gpu_timer timer;                                                                          \
-        float     total_time = 0.0f;                                                              \
-                                                                                                  \
-        /* Warmup */                                                                              \
-        for(int i = 0; i < 10; ++i)                                                               \
-        {                                                                                         \
-            kernel_gemm<half, c_layout, a_layout, b_layout, WM, WN, TM, TN>                       \
-                <<<grid_dim, block_dim, 0, stream>>>(d_C, d_A, d_B, M, N, K);                     \
-            HIP_CHECK(hipPeekAtLastError());                                                      \
-        }                                                                                         \
-        HIP_CHECK(hipStreamSynchronize(stream));                                                  \
-                                                                                                  \
-        /* Timing */                                                                              \
-        for(int i = 0; i < ITERATIONS; ++i)                                                       \
-        {                                                                                         \
-            timer.start(stream);                                                                  \
-            kernel_gemm<half, c_layout, a_layout, b_layout, WM, WN, TM, TN>                       \
-                <<<grid_dim, block_dim, 0, stream>>>(d_C, d_A, d_B, M, N, K);                     \
-            HIP_CHECK(hipPeekAtLastError());                                                      \
-            total_time += timer.stop(stream);                                                     \
-            HIP_CHECK(hipDeviceSynchronize());                                                    \
-        }                                                                                         \
-        HIP_CHECK(hipDeviceSynchronize());                                                        \
-                                                                                                  \
-        std::string layout_a = (a_layout == m_layout::row_major) ? "row_major" : "col_major";     \
-        std::string layout_b = (b_layout == m_layout::row_major) ? "row_major" : "col_major";     \
-        std::string layout_c = (c_layout == m_layout::row_major) ? "row_major" : "col_major";     \
-                                                                                                  \
-        std::cout << std::fixed << std::setprecision(3) << M << "," << N << "," << K << "," << WM \
-                  << "," << WN << "," << TM << "," << TN << "," << layout_a << "," << layout_b    \
-                  << "," << layout_c << "," << (total_time / ITERATIONS) << "," << total_time     \
-                  << std::endl;                                                                   \
-    }                                                                                             \
-    while(0)
-
-template<m_layout a_layout, m_layout b_layout, m_layout c_layout>
-void tune_size(size_t M, size_t N, size_t K)
+// Global test data structure
+struct test_data
 {
-    std::vector<half> h_A(M * K);
-    std::vector<half> h_B(K * N);
-    std::vector<half> h_C(M * N);
-
-    std::mt19937                          gen(42);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for(size_t i = 0; i < M * K; ++i)
-    {
-        h_A[i] = half(dist(gen));
-    }
-
-    for(size_t i = 0; i < K * N; ++i)
-    {
-        h_B[i] = half(dist(gen));
-    }
-
+    half*       d_A = nullptr;
+    half*       d_B = nullptr;
+    half*       d_C = nullptr;
     hipStream_t stream;
-    HIP_CHECK(hipStreamCreate(&stream));
+    size_t      M, N, K;
 
-    half *d_A, *d_B, *d_C;
-    HIP_CHECK(hipMalloc(&d_A, M * K * sizeof(half)));
-    HIP_CHECK(hipMalloc(&d_B, K * N * sizeof(half)));
-    HIP_CHECK(hipMalloc(&d_C, M * N * sizeof(half)));
+    test_data(size_t m, size_t n, size_t k) : M(m), N(n), K(k)
+    {
+        // Initialize random data
+        std::vector<half> h_A(M * K);
+        std::vector<half> h_B(K * N);
 
-    HIP_CHECK(hipMemcpy(d_A, h_A.data(), M * K * sizeof(half), hipMemcpyHostToDevice));
-    HIP_CHECK(hipMemcpy(d_B, h_B.data(), K * N * sizeof(half), hipMemcpyHostToDevice));
+        std::mt19937                          gen(42);
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
-    constexpr int ITERATIONS = 20;
+        for(size_t i = 0; i < M * K; ++i)
+        {
+            h_A[i] = half(dist(gen));
+        }
 
-    // Test all combinations with compile-time configurations
-    RUN_CONFIG(2, 2, 2, 2);
-    RUN_CONFIG(2, 2, 2, 4);
-    RUN_CONFIG(2, 2, 4, 2);
-    RUN_CONFIG(2, 2, 4, 4);
-    RUN_CONFIG(2, 4, 2, 2);
-    RUN_CONFIG(2, 4, 2, 4);
-    RUN_CONFIG(2, 4, 4, 2);
-    RUN_CONFIG(2, 4, 4, 4);
-    RUN_CONFIG(4, 2, 2, 2);
-    RUN_CONFIG(4, 2, 2, 4);
-    RUN_CONFIG(4, 2, 4, 2);
-    RUN_CONFIG(4, 2, 4, 4);
-    RUN_CONFIG(4, 4, 2, 2);
-    RUN_CONFIG(4, 4, 2, 4);
-    RUN_CONFIG(4, 4, 4, 2);
-    RUN_CONFIG(4, 4, 4, 4);
+        for(size_t i = 0; i < K * N; ++i)
+        {
+            h_B[i] = half(dist(gen));
+        }
 
-    HIP_CHECK(hipStreamDestroy(stream));
-    HIP_CHECK(hipFree(d_A));
-    HIP_CHECK(hipFree(d_B));
-    HIP_CHECK(hipFree(d_C));
+        // Create stream
+        HIP_CHECK(hipStreamCreate(&stream));
+
+        // Allocate device memory
+        HIP_CHECK(hipMalloc(&d_A, M * K * sizeof(half)));
+        HIP_CHECK(hipMalloc(&d_B, K * N * sizeof(half)));
+        HIP_CHECK(hipMalloc(&d_C, M * N * sizeof(half)));
+
+        // Copy data to device
+        HIP_CHECK(hipMemcpy(d_A, h_A.data(), M * K * sizeof(half), hipMemcpyHostToDevice));
+        HIP_CHECK(hipMemcpy(d_B, h_B.data(), K * N * sizeof(half), hipMemcpyHostToDevice));
+
+        HIP_CHECK(hipDeviceSynchronize());
+    }
+
+    ~test_data()
+    {
+        if(d_A)
+            HIP_CHECK(hipFree(d_A));
+        if(d_B)
+            HIP_CHECK(hipFree(d_B));
+        if(d_C)
+            HIP_CHECK(hipFree(d_C));
+        HIP_CHECK(hipStreamDestroy(stream));
+    }
+};
+
+// Global test data instance
+std::unique_ptr<test_data> g_test_data;
+
+// Template function to run a specific kernel configuration
+template<m_layout a_layout,
+         m_layout b_layout,
+         m_layout c_layout,
+         int      warps_m,
+         int      warps_n,
+         int      warp_tile_m,
+         int      warp_tile_n>
+void run_kernel_config(benchmark::State& state)
+{
+    if(!g_test_data)
+    {
+        state.SkipWithError("Test data not initialized");
+        return;
+    }
+
+    const size_t M = g_test_data->M;
+    const size_t N = g_test_data->N;
+    const size_t K = g_test_data->K;
+
+    // Calculate grid dimensions
+    constexpr int block_m = warps_m * warp_tile_m * wmma_tile;
+    constexpr int block_n = warps_n * warp_tile_n * wmma_tile;
+
+    const int grid_m       = (M + block_m - 1) / block_m;
+    const int grid_n       = (N + block_n - 1) / block_n;
+    const int total_blocks = grid_m * grid_n;
+
+    dim3 grid_dim(total_blocks, 1);
+    dim3 block_dim(warp_size * warps_m * warps_n);
+
+    gpu_timer timer;
+
+    // Warmup
+    for(int i = 0; i < 5; ++i)
+    {
+        kernel_gemm<half, c_layout, a_layout, b_layout, warps_m, warps_n, warp_tile_m, warp_tile_n>
+            <<<grid_dim, block_dim, 0, g_test_data->stream>>>(g_test_data->d_C,
+                                                              g_test_data->d_A,
+                                                              g_test_data->d_B,
+                                                              M,
+                                                              N,
+                                                              K);
+        HIP_CHECK(hipPeekAtLastError());
+    }
+    HIP_CHECK(hipStreamSynchronize(g_test_data->stream));
+
+    // Benchmark loop
+    for(auto _ : state)
+    {
+        timer.start(g_test_data->stream);
+        kernel_gemm<half, c_layout, a_layout, b_layout, warps_m, warps_n, warp_tile_m, warp_tile_n>
+            <<<grid_dim, block_dim, 0, g_test_data->stream>>>(g_test_data->d_C,
+                                                              g_test_data->d_A,
+                                                              g_test_data->d_B,
+                                                              M,
+                                                              N,
+                                                              K);
+        HIP_CHECK(hipPeekAtLastError());
+        float elapsed_time = timer.stop(g_test_data->stream);
+        HIP_CHECK(hipDeviceSynchronize());
+
+        double seconds = elapsed_time / 1000.0;
+        state.SetIterationTime(seconds);
+    }
 }
+
+// Macro to register all layout combinations for a specific config
+#define REGISTER_CONFIG(WM, WN, TM, TN)                                             \
+    benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rr_r",     \
+                                 run_kernel_config<m_layout::row_major,             \
+                                                   m_layout::row_major,             \
+                                                   m_layout::row_major,             \
+                                                   WM,                              \
+                                                   WN,                              \
+                                                   TM,                              \
+                                                   TN>)                             \
+        ->UseManualTime()                                                           \
+        ->Unit(benchmark::kMillisecond),                                            \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rc_r", \
+                                     run_kernel_config<m_layout::row_major,         \
+                                                       m_layout::col_major,         \
+                                                       m_layout::row_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cr_r", \
+                                     run_kernel_config<m_layout::col_major,         \
+                                                       m_layout::row_major,         \
+                                                       m_layout::row_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cc_r", \
+                                     run_kernel_config<m_layout::col_major,         \
+                                                       m_layout::col_major,         \
+                                                       m_layout::row_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rr_c", \
+                                     run_kernel_config<m_layout::row_major,         \
+                                                       m_layout::row_major,         \
+                                                       m_layout::col_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rc_c", \
+                                     run_kernel_config<m_layout::row_major,         \
+                                                       m_layout::col_major,         \
+                                                       m_layout::col_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cr_c", \
+                                     run_kernel_config<m_layout::col_major,         \
+                                                       m_layout::row_major,         \
+                                                       m_layout::col_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond),                                        \
+        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cc_c", \
+                                     run_kernel_config<m_layout::col_major,         \
+                                                       m_layout::col_major,         \
+                                                       m_layout::col_major,         \
+                                                       WM,                          \
+                                                       WN,                          \
+                                                       TM,                          \
+                                                       TN>)                         \
+            ->UseManualTime()                                                       \
+            ->Unit(benchmark::kMillisecond)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 4)
+    if(argc < 4)
     {
-        std::cerr << "Usage: " << argv[0] << " M N K" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " M N K [benchmark options...]" << std::endl;
         return 1;
     }
 
@@ -167,16 +296,69 @@ int main(int argc, char* argv[])
     size_t N = std::atol(argv[2]);
     size_t K = std::atol(argv[3]);
 
-    std::cout << "Testing size " << M << "x" << N << "x" << K << std::endl;
+    int trials = -1;
 
-    tune_size<m_layout::row_major, m_layout::row_major, m_layout::row_major>(M, N, K);
-    tune_size<m_layout::row_major, m_layout::col_major, m_layout::row_major>(M, N, K);
-    tune_size<m_layout::col_major, m_layout::row_major, m_layout::row_major>(M, N, K);
-    tune_size<m_layout::col_major, m_layout::col_major, m_layout::row_major>(M, N, K);
-    tune_size<m_layout::row_major, m_layout::row_major, m_layout::col_major>(M, N, K);
-    tune_size<m_layout::row_major, m_layout::col_major, m_layout::col_major>(M, N, K);
-    tune_size<m_layout::col_major, m_layout::row_major, m_layout::col_major>(M, N, K);
-    tune_size<m_layout::col_major, m_layout::col_major, m_layout::col_major>(M, N, K);
+    // Initialize global test data
+    g_test_data = std::make_unique<test_data>(M, N, K);
+
+    // Remove M, N, K arguments so benchmark can parse its own args
+    argc -= 3;
+    argv += 3;
+
+    // Initialize benchmark with adjusted argc/argv
+    benchmark::Initialize(&argc, argv);
+
+    std::vector<benchmark::internal::Benchmark*> benchmarks = {
+        REGISTER_CONFIG(2, 2, 2, 2), REGISTER_CONFIG(2, 2, 2, 4), REGISTER_CONFIG(2, 2, 2, 8),
+        REGISTER_CONFIG(2, 2, 4, 2), REGISTER_CONFIG(2, 2, 4, 4), REGISTER_CONFIG(2, 2, 4, 8),
+        REGISTER_CONFIG(2, 2, 8, 2), REGISTER_CONFIG(2, 2, 8, 4), REGISTER_CONFIG(2, 2, 8, 8),
+
+        REGISTER_CONFIG(2, 4, 2, 2), REGISTER_CONFIG(2, 4, 2, 4), REGISTER_CONFIG(2, 4, 2, 8),
+        REGISTER_CONFIG(2, 4, 4, 2), REGISTER_CONFIG(2, 4, 4, 4), REGISTER_CONFIG(2, 4, 4, 8),
+        REGISTER_CONFIG(2, 4, 8, 2), REGISTER_CONFIG(2, 4, 8, 4),
+
+        REGISTER_CONFIG(2, 8, 2, 2), REGISTER_CONFIG(2, 8, 2, 4), REGISTER_CONFIG(2, 8, 4, 2),
+        REGISTER_CONFIG(2, 8, 4, 4), REGISTER_CONFIG(2, 8, 8, 2), REGISTER_CONFIG(2, 8, 8, 4),
+
+        REGISTER_CONFIG(4, 2, 2, 2), REGISTER_CONFIG(4, 2, 2, 4), REGISTER_CONFIG(4, 2, 2, 8),
+        REGISTER_CONFIG(4, 2, 4, 2), REGISTER_CONFIG(4, 2, 4, 4), REGISTER_CONFIG(4, 2, 4, 8),
+        REGISTER_CONFIG(4, 2, 8, 2), REGISTER_CONFIG(4, 2, 8, 4), REGISTER_CONFIG(4, 2, 8, 8),
+
+        REGISTER_CONFIG(4, 4, 2, 2), REGISTER_CONFIG(4, 4, 2, 4), REGISTER_CONFIG(4, 4, 2, 8),
+        REGISTER_CONFIG(4, 4, 4, 2), REGISTER_CONFIG(4, 4, 4, 4), REGISTER_CONFIG(4, 4, 4, 8),
+        REGISTER_CONFIG(4, 4, 8, 2), REGISTER_CONFIG(4, 4, 8, 4), REGISTER_CONFIG(4, 4, 8, 8),
+
+        REGISTER_CONFIG(4, 8, 2, 2), REGISTER_CONFIG(4, 8, 2, 4), REGISTER_CONFIG(4, 8, 4, 2),
+        REGISTER_CONFIG(4, 8, 4, 4), REGISTER_CONFIG(4, 8, 8, 2), REGISTER_CONFIG(4, 8, 8, 4),
+
+        REGISTER_CONFIG(8, 2, 2, 2), REGISTER_CONFIG(8, 2, 2, 4), REGISTER_CONFIG(8, 2, 2, 8),
+        REGISTER_CONFIG(8, 2, 4, 2), REGISTER_CONFIG(8, 2, 4, 4), REGISTER_CONFIG(8, 2, 4, 8),
+
+        REGISTER_CONFIG(8, 4, 2, 2), REGISTER_CONFIG(8, 4, 2, 4), REGISTER_CONFIG(8, 4, 2, 8),
+        REGISTER_CONFIG(8, 4, 4, 2), REGISTER_CONFIG(8, 4, 4, 4), REGISTER_CONFIG(8, 4, 4, 8),
+    };
+
+    // Use manual timing
+    for(auto& b : benchmarks)
+    {
+        b->UseManualTime();
+        b->Unit(benchmark::kMillisecond);
+    }
+
+    // Force number of iterations
+    if(trials > 0)
+    {
+        for(auto& b : benchmarks)
+        {
+            b->Iterations(trials);
+        }
+    }
+
+    // Run benchmarks
+    benchmark::RunSpecifiedBenchmarks();
+
+    // Clean up global test data
+    g_test_data.reset();
 
     return 0;
 }

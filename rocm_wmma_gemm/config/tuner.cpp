@@ -23,14 +23,17 @@
  */
 
 #include <benchmark/benchmark.h>
+#include <fstream>
+#include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
 #include <iostream>
-#include <kernel/kernel.hpp>
+#include <kernel/common.hpp>
 #include <memory>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
-
-using namespace rocm_wmma_gemm;
 
 #define HIP_CHECK(call)                                                                        \
     {                                                                                          \
@@ -41,6 +44,17 @@ using namespace rocm_wmma_gemm;
                       << ": " << hipGetErrorString(status) << std::endl;                       \
             exit(EXIT_FAILURE);                                                                \
         }                                                                                      \
+    }
+
+#define HIPRTC_CHECK(call)                                                                        \
+    {                                                                                             \
+        hiprtcResult status = call;                                                               \
+        if(status != HIPRTC_SUCCESS)                                                              \
+        {                                                                                         \
+            std::cerr << "HIPRTC error: " #call " failed with error " << static_cast<int>(status) \
+                      << std::endl;                                                               \
+            exit(EXIT_FAILURE);                                                                   \
+        }                                                                                         \
     }
 
 class gpu_timer
@@ -122,31 +136,249 @@ struct test_data
     ~test_data()
     {
         if(d_A)
+        {
             HIP_CHECK(hipFree(d_A));
+        }
+
         if(d_B)
+        {
             HIP_CHECK(hipFree(d_B));
+        }
+
         if(d_C)
+        {
             HIP_CHECK(hipFree(d_C));
+        }
+
         HIP_CHECK(hipStreamDestroy(stream));
     }
 };
 
-// Global test data instance
-std::unique_ptr<test_data> g_test_data;
-
-// Template function to run a specific kernel configuration
-template<m_layout a_layout,
-         m_layout b_layout,
-         m_layout c_layout,
-         int      warps_m,
-         int      warps_n,
-         int      warp_tile_m,
-         int      warp_tile_n>
-void run_kernel_config(benchmark::State& state)
+// Configuration parameters
+struct config_params
 {
-    if(!g_test_data)
+    int warps_m;
+    int warps_n;
+    int warp_tile_m;
+    int warp_tile_n;
+    int layout_a; // 0=row_major, 1=col_major
+    int layout_b; // 0=row_major, 1=col_major
+    int layout_c; // 0=row_major, 1=col_major
+};
+
+// Global test data and config
+std::unique_ptr<test_data> g_test_data;
+config_params              g_config;
+hipModule_t                g_module      = nullptr;
+hipFunction_t              g_kernel_func = nullptr;
+
+// Generate kernel source code for specific configuration
+std::string generate_kernel_source(const config_params& config)
+{
+    std::stringstream kernel_source;
+
+    // Include the existing headers
+    kernel_source << R"(
+// Define missing std functions for hipRTC
+namespace std
+{
+    template<typename T>
+    __device__ __host__ constexpr const T& min(const T& a, const T& b)
     {
-        state.SkipWithError("Test data not initialized");
+        return (b < a) ? b : a;
+    }
+
+    template<typename T>
+    __device__ __host__ constexpr const T& max(const T& a, const T& b)
+    {
+        return (a < b) ? b : a;
+    }
+}
+
+#include <kernel/kernel.hpp>
+
+namespace rocm_wmma_gemm
+{
+
+// Extern template declaration - this IS the kernel we'll call
+template __global__ void kernel_gemm<half, )"
+                  << (config.layout_c == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
+                  << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
+                  << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
+                  << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
+                  << config.warp_tile_n << R"(>(
+    half* C, const half* A, const half* B, int M, int N, int K);
+
+} // namespace rocm_wmma_gemm
+)";
+
+    return kernel_source.str();
+}
+
+// Read header file contents
+std::string read_header_file(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    if(!file.is_open())
+    {
+        std::cerr << "Failed to open header file: " << filepath << std::endl;
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+// Compile kernel using hipRTC
+bool compile_kernel(const config_params& config)
+{
+    // Clean up previous module if exists
+    if(g_module)
+    {
+        HIP_CHECK(hipModuleUnload(g_module));
+        g_module      = nullptr;
+        g_kernel_func = nullptr;
+    }
+
+    // Generate kernel source
+    std::string kernel_source = generate_kernel_source(config);
+
+    // Read required headers
+    std::vector<std::string> header_sources;
+    std::vector<const char*> header_names;
+    std::vector<const char*> header_contents;
+
+    // Add required headers - adjust paths as needed
+    std::string include_dir = PROJECT_SOURCE_DIR "/include";
+
+    std::vector<std::string> required_headers = {include_dir + "/kernel/kernel.hpp",
+                                                 include_dir + "/kernel/common.hpp",
+                                                 include_dir + "/kernel/fragment.hpp",
+                                                 include_dir + "/kernel/load.hpp",
+                                                 include_dir + "/kernel/mapping.hpp",
+                                                 include_dir + "/kernel/wmma.hpp"};
+
+    std::vector<std::string> header_name_strings = {"kernel/kernel.hpp",
+                                                    "kernel/common.hpp",
+                                                    "kernel/fragment.hpp",
+                                                    "kernel/load.hpp",
+                                                    "kernel/mapping.hpp",
+                                                    "kernel/wmma.hpp"};
+
+    // Read all header files
+    for(size_t i = 0; i < required_headers.size(); ++i)
+    {
+        std::string content = read_header_file(required_headers[i]);
+        if(content.empty())
+        {
+            std::cerr << "Failed to read header: " << required_headers[i] << std::endl;
+            return false;
+        }
+        header_sources.push_back(content);
+    }
+
+    // Prepare header arrays for hipRTC
+    for(size_t i = 0; i < header_sources.size(); ++i)
+    {
+        header_contents.push_back(header_sources[i].c_str());
+        header_names.push_back(header_name_strings[i].c_str());
+    }
+
+    // Create hipRTC program with headers
+    hiprtcProgram prog;
+    HIPRTC_CHECK(hiprtcCreateProgram(&prog,
+                                     kernel_source.c_str(),
+                                     "dynamic_kernel.hip",
+                                     header_contents.size(),
+                                     header_contents.data(),
+                                     header_names.data()));
+
+    // Build the full template instantiation string for name expression
+    std::stringstream kernel_name_ss;
+    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm<half, "
+                   << (config.layout_c == 0 ? "rocm_wmma_gemm::m_layout::row_major"
+                                            : "rocm_wmma_gemm::m_layout::col_major")
+                   << ", "
+                   << (config.layout_a == 0 ? "rocm_wmma_gemm::m_layout::row_major"
+                                            : "rocm_wmma_gemm::m_layout::col_major")
+                   << ", "
+                   << (config.layout_b == 0 ? "rocm_wmma_gemm::m_layout::row_major"
+                                            : "rocm_wmma_gemm::m_layout::col_major")
+                   << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
+                   << ", " << config.warp_tile_n << ">";
+
+    std::string kernel_name = kernel_name_ss.str();
+    std::cout << "Adding name expression: " << kernel_name << std::endl;
+
+    // Add name expression for the specific template instantiation BEFORE compilation
+    HIPRTC_CHECK(hiprtcAddNameExpression(prog, kernel_name.c_str()));
+
+    // Set compilation options
+    std::vector<const char*> options
+        = {"-O3", "-ffast-math", "-mcumode", "-std=c++17", "--offload-arch=gfx1100"};
+
+    // Compile the program
+    hiprtcResult compile_result = hiprtcCompileProgram(prog, options.size(), options.data());
+
+    // Check for compilation errors
+    if(compile_result != HIPRTC_SUCCESS)
+    {
+        size_t log_size;
+        HIPRTC_CHECK(hiprtcGetProgramLogSize(prog, &log_size));
+
+        if(log_size > 1)
+        {
+            std::vector<char> log(log_size);
+            HIPRTC_CHECK(hiprtcGetProgramLog(prog, log.data()));
+            std::cerr << "Compilation failed:\n" << log.data() << std::endl;
+        }
+
+        HIPRTC_CHECK(hiprtcDestroyProgram(&prog));
+        return false;
+    }
+
+    // Get the mangled name of the kernel AFTER compilation
+    const char*  lowered_name_ptr = nullptr;
+    hiprtcResult name_result = hiprtcGetLoweredName(prog, kernel_name.c_str(), &lowered_name_ptr);
+
+    std::string mangled_name;
+    if(name_result == HIPRTC_SUCCESS && lowered_name_ptr != nullptr)
+    {
+        mangled_name = std::string(lowered_name_ptr);
+        std::cout << "Mangled kernel name: " << mangled_name << std::endl;
+    }
+    else
+    {
+        std::cerr << "Failed to get mangled name, trying original name" << std::endl;
+        mangled_name = kernel_name; // Fallback to original name
+    }
+
+    // Get compiled code
+    size_t code_size;
+    HIPRTC_CHECK(hiprtcGetCodeSize(prog, &code_size));
+
+    std::vector<char> code(code_size);
+    HIPRTC_CHECK(hiprtcGetCode(prog, code.data()));
+
+    // Clean up program BEFORE loading module
+    HIPRTC_CHECK(hiprtcDestroyProgram(&prog));
+
+    // Load module
+    HIP_CHECK(hipModuleLoadData(&g_module, code.data()));
+
+    // Get kernel function using the mangled name
+    HIP_CHECK(hipModuleGetFunction(&g_kernel_func, g_module, mangled_name.c_str()));
+
+    return true;
+}
+
+// Benchmark function for the dynamically compiled kernel
+void run_kernel_benchmark(benchmark::State& state)
+{
+    if(!g_test_data || !g_kernel_func)
+    {
+        state.SkipWithError("Test data or kernel not initialized");
         return;
     }
 
@@ -155,28 +387,39 @@ void run_kernel_config(benchmark::State& state)
     const size_t K = g_test_data->K;
 
     // Calculate grid dimensions
-    constexpr int block_m = warps_m * warp_tile_m * wmma_tile;
-    constexpr int block_n = warps_n * warp_tile_n * wmma_tile;
+    const int block_m = g_config.warps_m * g_config.warp_tile_m * rocm_wmma_gemm::wmma_tile;
+    const int block_n = g_config.warps_n * g_config.warp_tile_n * rocm_wmma_gemm::wmma_tile;
 
     const int grid_m       = (M + block_m - 1) / block_m;
     const int grid_n       = (N + block_n - 1) / block_n;
     const int total_blocks = grid_m * grid_n;
 
     dim3 grid_dim(total_blocks, 1);
-    dim3 block_dim(warp_size * warps_m * warps_n);
+    dim3 block_dim(rocm_wmma_gemm::warp_size * g_config.warps_m * g_config.warps_n);
 
     gpu_timer timer;
+
+    void* args[] = {&g_test_data->d_C,
+                    &g_test_data->d_A,
+                    &g_test_data->d_B,
+                    const_cast<int*>(reinterpret_cast<const int*>(&M)),
+                    const_cast<int*>(reinterpret_cast<const int*>(&N)),
+                    const_cast<int*>(reinterpret_cast<const int*>(&K))};
 
     // Warmup
     for(int i = 0; i < 5; ++i)
     {
-        kernel_gemm<half, c_layout, a_layout, b_layout, warps_m, warps_n, warp_tile_m, warp_tile_n>
-            <<<grid_dim, block_dim, 0, g_test_data->stream>>>(g_test_data->d_C,
-                                                              g_test_data->d_A,
-                                                              g_test_data->d_B,
-                                                              M,
-                                                              N,
-                                                              K);
+        HIP_CHECK(hipModuleLaunchKernel(g_kernel_func,
+                                        grid_dim.x,
+                                        grid_dim.y,
+                                        grid_dim.z,
+                                        block_dim.x,
+                                        block_dim.y,
+                                        block_dim.z,
+                                        0,
+                                        g_test_data->stream,
+                                        args,
+                                        nullptr));
         HIP_CHECK(hipPeekAtLastError());
     }
     HIP_CHECK(hipStreamSynchronize(g_test_data->stream));
@@ -185,14 +428,20 @@ void run_kernel_config(benchmark::State& state)
     for(auto _ : state)
     {
         timer.start(g_test_data->stream);
-        kernel_gemm<half, c_layout, a_layout, b_layout, warps_m, warps_n, warp_tile_m, warp_tile_n>
-            <<<grid_dim, block_dim, 0, g_test_data->stream>>>(g_test_data->d_C,
-                                                              g_test_data->d_A,
-                                                              g_test_data->d_B,
-                                                              M,
-                                                              N,
-                                                              K);
+
+        HIP_CHECK(hipModuleLaunchKernel(g_kernel_func,
+                                        grid_dim.x,
+                                        grid_dim.y,
+                                        grid_dim.z,
+                                        block_dim.x,
+                                        block_dim.y,
+                                        block_dim.z,
+                                        0,
+                                        g_test_data->stream,
+                                        args,
+                                        nullptr));
         HIP_CHECK(hipPeekAtLastError());
+
         float elapsed_time = timer.stop(g_test_data->stream);
         HIP_CHECK(hipDeviceSynchronize());
 
@@ -201,163 +450,61 @@ void run_kernel_config(benchmark::State& state)
     }
 }
 
-// Macro to register all layout combinations for a specific config
-#define REGISTER_CONFIG(WM, WN, TM, TN)                                             \
-    benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rr_r",     \
-                                 run_kernel_config<m_layout::row_major,             \
-                                                   m_layout::row_major,             \
-                                                   m_layout::row_major,             \
-                                                   WM,                              \
-                                                   WN,                              \
-                                                   TM,                              \
-                                                   TN>)                             \
-        ->UseManualTime()                                                           \
-        ->Unit(benchmark::kMillisecond),                                            \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rc_r", \
-                                     run_kernel_config<m_layout::row_major,         \
-                                                       m_layout::col_major,         \
-                                                       m_layout::row_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cr_r", \
-                                     run_kernel_config<m_layout::col_major,         \
-                                                       m_layout::row_major,         \
-                                                       m_layout::row_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cc_r", \
-                                     run_kernel_config<m_layout::col_major,         \
-                                                       m_layout::col_major,         \
-                                                       m_layout::row_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rr_c", \
-                                     run_kernel_config<m_layout::row_major,         \
-                                                       m_layout::row_major,         \
-                                                       m_layout::col_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_rc_c", \
-                                     run_kernel_config<m_layout::row_major,         \
-                                                       m_layout::col_major,         \
-                                                       m_layout::col_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cr_c", \
-                                     run_kernel_config<m_layout::col_major,         \
-                                                       m_layout::row_major,         \
-                                                       m_layout::col_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond),                                        \
-        benchmark::RegisterBenchmark("config_" #WM "_" #WN "_" #TM "_" #TN "_cc_c", \
-                                     run_kernel_config<m_layout::col_major,         \
-                                                       m_layout::col_major,         \
-                                                       m_layout::col_major,         \
-                                                       WM,                          \
-                                                       WN,                          \
-                                                       TM,                          \
-                                                       TN>)                         \
-            ->UseManualTime()                                                       \
-            ->Unit(benchmark::kMillisecond)
-
 int main(int argc, char* argv[])
 {
-    if(argc < 4)
+    if(argc != 11)
     {
-        std::cerr << "Usage: " << argv[0] << " M N K [benchmark options...]" << std::endl;
+        std::cerr << "Usage: " << argv[0]
+                  << " M N K warps_m warps_n warp_tile_m warp_tile_n layout_a layout_b layout_c"
+                  << std::endl;
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 0 1 0" << std::endl;
         return 1;
     }
 
+    // Parse command line arguments
     size_t M = std::atol(argv[1]);
     size_t N = std::atol(argv[2]);
     size_t K = std::atol(argv[3]);
 
-    int trials = -1;
+    g_config.warps_m     = std::atoi(argv[4]);
+    g_config.warps_n     = std::atoi(argv[5]);
+    g_config.warp_tile_m = std::atoi(argv[6]);
+    g_config.warp_tile_n = std::atoi(argv[7]);
+    g_config.layout_a    = std::atoi(argv[8]);
+    g_config.layout_b    = std::atoi(argv[9]);
+    g_config.layout_c    = std::atoi(argv[10]);
 
-    // Initialize global test data
+    // Initialize test data
     g_test_data = std::make_unique<test_data>(M, N, K);
 
-    // Remove M, N, K arguments so benchmark can parse its own args
-    argc -= 3;
-    argv += 3;
+    // Compile kernel with hipRTC
+    if(!compile_kernel(g_config))
+    {
+        std::cerr << "Failed to compile kernel" << std::endl;
+        return 1;
+    }
 
-    // Initialize benchmark with adjusted argc/argv
+    std::cout << "Successfully compiled kernel for config: " << g_config.warps_m << ","
+              << g_config.warps_n << "," << g_config.warp_tile_m << "," << g_config.warp_tile_n
+              << "," << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
+              << std::endl;
+
+    // Initialize benchmark
     benchmark::Initialize(&argc, argv);
 
-    std::vector<benchmark::internal::Benchmark*> benchmarks = {
-        REGISTER_CONFIG(2, 2, 2, 2), REGISTER_CONFIG(2, 2, 2, 4), REGISTER_CONFIG(2, 2, 2, 8),
-        REGISTER_CONFIG(2, 2, 4, 2), REGISTER_CONFIG(2, 2, 4, 4), REGISTER_CONFIG(2, 2, 4, 8),
-        REGISTER_CONFIG(2, 2, 8, 2), REGISTER_CONFIG(2, 2, 8, 4), REGISTER_CONFIG(2, 2, 8, 8),
+    // Register the benchmark
+    benchmark::RegisterBenchmark("dynamic_kernel", run_kernel_benchmark)
+        ->UseManualTime()
+        ->Unit(benchmark::kMillisecond);
 
-        REGISTER_CONFIG(2, 4, 2, 2), REGISTER_CONFIG(2, 4, 2, 4), REGISTER_CONFIG(2, 4, 2, 8),
-        REGISTER_CONFIG(2, 4, 4, 2), REGISTER_CONFIG(2, 4, 4, 4), REGISTER_CONFIG(2, 4, 4, 8),
-        REGISTER_CONFIG(2, 4, 8, 2), REGISTER_CONFIG(2, 4, 8, 4),
-
-        REGISTER_CONFIG(2, 8, 2, 2), REGISTER_CONFIG(2, 8, 2, 4), REGISTER_CONFIG(2, 8, 4, 2),
-        REGISTER_CONFIG(2, 8, 4, 4), REGISTER_CONFIG(2, 8, 8, 2), REGISTER_CONFIG(2, 8, 8, 4),
-
-        REGISTER_CONFIG(4, 2, 2, 2), REGISTER_CONFIG(4, 2, 2, 4), REGISTER_CONFIG(4, 2, 2, 8),
-        REGISTER_CONFIG(4, 2, 4, 2), REGISTER_CONFIG(4, 2, 4, 4), REGISTER_CONFIG(4, 2, 4, 8),
-        REGISTER_CONFIG(4, 2, 8, 2), REGISTER_CONFIG(4, 2, 8, 4), REGISTER_CONFIG(4, 2, 8, 8),
-
-        REGISTER_CONFIG(4, 4, 2, 2), REGISTER_CONFIG(4, 4, 2, 4), REGISTER_CONFIG(4, 4, 2, 8),
-        REGISTER_CONFIG(4, 4, 4, 2), REGISTER_CONFIG(4, 4, 4, 4), REGISTER_CONFIG(4, 4, 4, 8),
-        REGISTER_CONFIG(4, 4, 8, 2), REGISTER_CONFIG(4, 4, 8, 4), REGISTER_CONFIG(4, 4, 8, 8),
-
-        REGISTER_CONFIG(4, 8, 2, 2), REGISTER_CONFIG(4, 8, 2, 4), REGISTER_CONFIG(4, 8, 4, 2),
-        REGISTER_CONFIG(4, 8, 4, 4), REGISTER_CONFIG(4, 8, 8, 2), REGISTER_CONFIG(4, 8, 8, 4),
-
-        REGISTER_CONFIG(8, 2, 2, 2), REGISTER_CONFIG(8, 2, 2, 4), REGISTER_CONFIG(8, 2, 2, 8),
-        REGISTER_CONFIG(8, 2, 4, 2), REGISTER_CONFIG(8, 2, 4, 4), REGISTER_CONFIG(8, 2, 4, 8),
-
-        REGISTER_CONFIG(8, 4, 2, 2), REGISTER_CONFIG(8, 4, 2, 4), REGISTER_CONFIG(8, 4, 2, 8),
-        REGISTER_CONFIG(8, 4, 4, 2), REGISTER_CONFIG(8, 4, 4, 4), REGISTER_CONFIG(8, 4, 4, 8),
-    };
-
-    // Use manual timing
-    for(auto& b : benchmarks)
-    {
-        b->UseManualTime();
-        b->Unit(benchmark::kMillisecond);
-    }
-
-    // Force number of iterations
-    if(trials > 0)
-    {
-        for(auto& b : benchmarks)
-        {
-            b->Iterations(trials);
-        }
-    }
-
-    // Run benchmarks
+    // Run benchmark
     benchmark::RunSpecifiedBenchmarks();
 
-    // Clean up global test data
+    // Clean up
+    if(g_module)
+    {
+        HIP_CHECK(hipModuleUnload(g_module));
+    }
     g_test_data.reset();
 
     return 0;

@@ -59,6 +59,10 @@ target_compile_options(tuner PRIVATE
     -ffast-math         # Fast math operations (may break strict IEEE compliance)
 )
 
+target_compile_definitions(tuner PRIVATE
+    PROJECT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 # Copy tune.py to build directory
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/config/tune.py

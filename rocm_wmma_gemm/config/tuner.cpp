@@ -157,13 +157,14 @@ struct test_data
 // Configuration parameters
 struct config_params
 {
-    int warps_m;
-    int warps_n;
-    int warp_tile_m;
-    int warp_tile_n;
-    int layout_a; // 0=row_major, 1=col_major
-    int layout_b; // 0=row_major, 1=col_major
-    int layout_c; // 0=row_major, 1=col_major
+    int         warps_m;
+    int         warps_n;
+    int         warp_tile_m;
+    int         warp_tile_n;
+    int         layout_a; // 0=row_major, 1=col_major
+    int         layout_b; // 0=row_major, 1=col_major
+    int         layout_c; // 0=row_major, 1=col_major
+    std::string gpu_arch;
 };
 
 // Global test data and config
@@ -316,7 +317,7 @@ bool compile_kernel(const config_params& config)
 
     // Set compilation options
     std::vector<const char*> options
-        = {"-O3", "-ffast-math", "-mcumode", "-std=c++17", "--offload-arch=gfx1100"};
+        = {"-O3", "-ffast-math", "-mcumode", "-std=c++17", config.gpu_arch.c_str()};
 
     // Compile the program
     hiprtcResult compile_result = hiprtcCompileProgram(prog, options.size(), options.data());
@@ -452,12 +453,13 @@ void run_kernel_benchmark(benchmark::State& state)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 11)
+    if(argc != 12)
     {
-        std::cerr << "Usage: " << argv[0]
-                  << " M N K warps_m warps_n warp_tile_m warp_tile_n layout_a layout_b layout_c"
-                  << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 0 1 0" << std::endl;
+        std::cerr
+            << "Usage: " << argv[0]
+            << " M N K warps_m warps_n warp_tile_m warp_tile_n layout_a layout_b layout_c gpu_arch"
+            << std::endl;
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 0 1 0 gfx1100" << std::endl;
         return 1;
     }
 
@@ -473,6 +475,8 @@ int main(int argc, char* argv[])
     g_config.layout_a    = std::atoi(argv[8]);
     g_config.layout_b    = std::atoi(argv[9]);
     g_config.layout_c    = std::atoi(argv[10]);
+    std::string tmp      = argv[11];
+    g_config.gpu_arch    = "--offload-arch=" + tmp;
 
     // Initialize test data
     g_test_data = std::make_unique<test_data>(M, N, K);

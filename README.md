@@ -14,7 +14,11 @@ This repository aims to:
 ### Prerequisites
 - AMD ROCm installed with HIP support
 - CMake version 3.10 or higher
-- Python3 (required for config generation)
+- Python3 (required for config generation and tuning)
+  - Python packages (can be installed with pip or conda)
+    - ``numpy``
+    - ``scikit-learn``
+    - ``scipy``
 - AMD RDNA3/RDNA3.5/RDNA4 GPU (required for WMMA support)
 
 ### Build Steps
@@ -56,7 +60,23 @@ The GEMM implementation includes a tuning system to find optimal configurations 
 To run the tuner:
 ```bash
 cd build
-python3 tune.py  # Results written to gemm_config_tuned.json
+# Default behavior (all sizes and layouts)
+python3 tune.py # Results written to gemm_config_tuned.json
+
+# Test specific sizes
+python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
+
+# Test specific layouts
+python3 tune.py --layouts r,c,r c,c,r
+
+# Different GPU architecture
+python3 tune.py --gpu-arch gfx1103
+
+# More thorough search
+python3 tune.py --initial-samples 20 --iterations 40
+
+# With output
+python3 tune.py --output output.json
 ```
 
 ## Performance Results

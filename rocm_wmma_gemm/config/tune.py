@@ -10,6 +10,8 @@ from scipy.optimize import minimize
 from scipy.stats import norm
 import warnings
 import re
+import argparse
+import sys
 warnings.filterwarnings('ignore')
 
 # Matrix sizes to test (M, N, K)
@@ -37,7 +39,7 @@ LAYOUTS = [
 ]
 
 class BayesianGEMMTuner:
-    def __init__(self, n_initial_samples=15, n_iterations=30, max_shared_memory=65336):
+    def __init__(self, n_initial_samples=15, n_iterations=30, max_shared_memory=65336, gpu_arch="gfx1100"):
         """
         Bayesian optimization tuner for GEMM kernels.
 
@@ -45,10 +47,12 @@ class BayesianGEMMTuner:
             n_initial_samples: Number of random initial samples
             n_iterations: Number of BO iterations
             max_shared_memory: Maximum shared memory in bytes (RDNA3 limit: 65336)
+            gpu_arch: GPU architecture string (e.g., "gfx1100", "gfx1030", "gfx900")
         """
         self.n_initial_samples = n_initial_samples
         self.n_iterations = n_iterations
         self.max_shared_memory = max_shared_memory
+        self.gpu_arch = gpu_arch
 
         # Valid discrete values for each parameter
         self.valid_values = {
@@ -125,7 +129,8 @@ class BayesianGEMMTuner:
                 str(M), str(N), str(K),
                 str(warps_m), str(warps_n),
                 str(warp_tile_m), str(warp_tile_n),
-                str(layout_a), str(layout_b), str(layout_c)
+                str(layout_a), str(layout_b), str(layout_c),
+                self.gpu_arch  # Pass GPU architecture
             ], capture_output=True, text=True, timeout=60, check=False)
 
             if result.returncode != 0:
@@ -379,15 +384,26 @@ class BayesianGEMMTuner:
             'memory_used_bytes': memory_used
         }
 
-    def tune_all(self):
-        """Tune all size and layout combinations."""
+    def tune_all(self, sizes=None, layouts=None):
+        """
+        Tune all size and layout combinations.
+
+        Args:
+            sizes: List of (M, N, K) tuples to test. If None, uses default SIZES.
+            layouts: List of (layout_a, layout_b, layout_c) tuples. If None, uses default LAYOUTS.
+        """
+        if sizes is None:
+            sizes = SIZES
+        if layouts is None:
+            layouts = LAYOUTS
+
         results = {}
 
-        for M, N, K in SIZES:
+        for M, N, K in sizes:
             size_key = f"{M}x{N}x{K}"
             results[size_key] = {}
 
-            for layout_a, layout_b, layout_c in LAYOUTS:
+            for layout_a, layout_b, layout_c in layouts:
                 layout_key = f"{layout_a}_{layout_b}_{layout_c}"
 
                 result = self.tune_size_layout(M, N, K, layout_a, layout_b, layout_c)
@@ -400,7 +416,7 @@ class BayesianGEMMTuner:
                             "B": "row_major" if layout_b == 0 else "col_major",
                             "C": "row_major" if layout_c == 0 else "col_major"
                         },
-                        "config": result['config'],
+                        "config": result['config'],  # Just the warps/tile parameters
                         "avg_time_ms": result['time_ms'],
                         "evaluations": result['total_evaluations'],
                         "memory_used_bytes": result['memory_used_bytes']
@@ -408,18 +424,118 @@ class BayesianGEMMTuner:
 
         return results
 
+def parse_matrix_sizes(size_strings):
+    """Parse matrix size strings like '1024,1024,1024' into tuples."""
+    sizes = []
+    for size_str in size_strings:
+        try:
+            parts = size_str.split(',')
+            if len(parts) != 3:
+                raise ValueError(f"Invalid size format: {size_str}. Expected M,N,K")
+            M, N, K = map(int, parts)
+            sizes.append((M, N, K))
+        except ValueError as e:
+            print(f"Error parsing size '{size_str}': {e}")
+            sys.exit(1)
+    return sizes
+
+def parse_layouts(layout_strings):
+    """Parse layout strings like 'row_major,col_major,row_major' into tuples."""
+    layouts = []
+    layout_map = {'row_major': 0, 'col_major': 1, 'r': 0, 'c': 1}
+
+    for layout_str in layout_strings:
+        try:
+            parts = layout_str.split(',')
+            if len(parts) != 3:
+                raise ValueError(f"Invalid layout format: {layout_str}. Expected A,B,C")
+
+            layout_tuple = []
+            for part in parts:
+                part = part.strip().lower()
+                if part not in layout_map:
+                    raise ValueError(f"Invalid layout '{part}'. Use 'row_major'/'r' or 'col_major'/'c'")
+                layout_tuple.append(layout_map[part])
+
+            layouts.append(tuple(layout_tuple))
+        except ValueError as e:
+            print(f"Error parsing layout '{layout_str}': {e}")
+            sys.exit(1)
+
+    return layouts
+
 def main():
+    parser = argparse.ArgumentParser(
+        description='Bayesian Optimization GEMM Tuner',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use default sizes and layouts
+  python tune.py
+
+  # Tune specific matrix sizes
+  python tune.py --sizes 1024,1024,1024 2048,2048,2048
+
+  # Tune specific layouts (A,B,C)
+  python tune.py --layouts row_major,col_major,row_major col_major,col_major,row_major
+
+  # Use shorthand for layouts
+  python tune.py --layouts r,c,r c,c,r
+
+  # Custom GPU architecture
+  python tune.py --gpu-arch gfx1030
+
+  # Custom iteration counts
+  python tune.py --initial-samples 20 --iterations 40
+        """)
+
+    parser.add_argument('--sizes', nargs='*',
+                       help='Matrix sizes as M,N,K (e.g., 1024,1024,1024 2048,2048,2048)')
+    parser.add_argument('--layouts', nargs='*',
+                       help='Matrix layouts as A,B,C (e.g., row_major,col_major,row_major or r,c,r)')
+    parser.add_argument('--gpu-arch', default='gfx1100',
+                       help='GPU architecture (default: gfx1100)')
+    parser.add_argument('--initial-samples', type=int, default=12,
+                       help='Number of initial random samples (default: 12)')
+    parser.add_argument('--iterations', type=int, default=25,
+                       help='Number of Bayesian optimization iterations (default: 25)')
+    parser.add_argument('--max-memory', type=int, default=65336,
+                       help='Maximum shared memory in bytes (default: 65336 for RDNA3)')
+    parser.add_argument('--output', default='gemm_config_tunedn.json',
+                       help='Output JSON file (default: gemm_config_tuned.json)')
+
+    args = parser.parse_args()
+
+    # Parse sizes and layouts
+    if args.sizes:
+        sizes = parse_matrix_sizes(args.sizes)
+    else:
+        sizes = SIZES
+
+    if args.layouts:
+        layouts = parse_layouts(args.layouts)
+    else:
+        layouts = LAYOUTS
+
     print("Starting Bayesian Optimization GEMM Tuning...")
-    print(f"RDNA3 shared memory limit: 65336 bytes")
-    print(f"Will tune {len(SIZES)} matrix sizes with {len(LAYOUTS)} layout combinations each")
+    print(f"GPU Architecture: {args.gpu_arch}")
+    print(f"Shared memory limit: {args.max_memory} bytes")
+    print(f"Matrix sizes to test: {len(sizes)}")
+    for size in sizes:
+        print(f"  {size[0]}×{size[1]}×{size[2]}")
+    print(f"Layout combinations to test: {len(layouts)}")
+    for i, layout in enumerate(layouts):
+        layout_names = ["row_major" if x == 0 else "col_major" for x in layout]
+        print(f"  {i+1}: A={layout_names[0]}, B={layout_names[1]}, C={layout_names[2]}")
 
     tuner = BayesianGEMMTuner(
-        n_initial_samples=12,  # Reasonable initial exploration
-        n_iterations=25,       # Good balance of exploration/exploitation
-        max_shared_memory=65336  # RDNA3 limit
+        n_initial_samples=args.initial_samples,
+        n_iterations=args.iterations,
+        max_shared_memory=args.max_memory,
+        gpu_arch=args.gpu_arch
     )
 
-    results = tuner.tune_all()
+    results = tuner.tune_all(sizes=sizes, layouts=layouts)
 
     # Generate configuration JSON
     configs = []
@@ -435,7 +551,7 @@ def main():
     config_data = {"configurations": configs}
 
     # Save results
-    with open("gemm_config_tuned.json", "w") as f:
+    with open(args.output, "w") as f:
         json.dump(config_data, f, indent=4)
 
     # Print summary
@@ -455,9 +571,12 @@ def main():
                   f"{memory_used} bytes)")
             total_evaluations += result['evaluations']
 
-    print(f"\nTotal configurations evaluated: {total_evaluations}")
-    print(f"Average evaluations per problem: {total_evaluations / (len(SIZES) * len(LAYOUTS)):.1f}")
-    print(f"Configurations saved to: gemm_config_tuned.json")
+    if results:
+        avg_evals = total_evaluations / (len(sizes) * len(layouts))
+        print(f"\nTotal configurations evaluated: {total_evaluations}")
+        print(f"Average evaluations per problem: {avg_evals:.1f}")
+
+    print(f"Configurations saved to: {args.output}")
 
 if __name__ == "__main__":
     main()

@@ -71,7 +71,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     T* b_tiles_1 = lds_mem + lds_size + (block_m * block_k);
 
     // Each block is launched with a one-dimensional thread block.
-    const int half_block = blockDim.x / 2;
+    const int full_block = blockDim.x;
+    const int half_block = full_block / 2;
     const int tid        = threadIdx.x;
 
     const int cid = tid % half_block;
@@ -209,8 +210,7 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         {
             for(int wn = 0; wn < warp_tile_n; ++wn)
             {
-                size_t wn_s = (wm % 2) ? (warp_tile_n - wn - 1) : wn;
-                wmma(a_frag[wm], b_frag[wn_s], c_frags[wm][wn_s]);
+                wmma(a_frag[wm], b_frag[wn], c_frags[wm][wn]);
             }
         }
 
@@ -238,33 +238,37 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         }
     }
 #else
-    if constexpr(LAYOUT_C == m_layout::col_major)
+    constexpr bool is_col_major  = (LAYOUT_C == m_layout::col_major);
+    constexpr int  primary_dim   = is_col_major ? block_n : block_m;
+    constexpr int  secondary_dim = is_col_major ? block_m : block_n;
+
+    // Calculate the total size of the output tile
+    constexpr int  total_tile_elements = block_m * block_n;
+    constexpr int  max_shared_elements = 2 * lds_size;
+    constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
+    constexpr int  chunk_size = needs_chunking ? max_shared_elements / secondary_dim : primary_dim;
+    constexpr int  remainder  = primary_dim % chunk_size;
+    constexpr int  last_chunk_size
+        = (remainder == 0) ? (primary_dim == 0 ? 0 : chunk_size) : remainder;
+
+    half* c_tile = lds_mem;
+
+    for(int chunk_idx = 0; chunk_idx < primary_dim; chunk_idx += chunk_size)
     {
-        // Calculate the total size of the output tile
-        constexpr int  total_tile_elements = block_m * block_n;
-        constexpr int  max_shared_elements = 2 * lds_size;
-        constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
-        constexpr int  chunk_size = needs_chunking ? max_shared_elements / block_m : block_n;
-        constexpr int  remainder  = block_n % chunk_size;
-        constexpr int  last_chunk_size
-            = (remainder == 0) ? (block_n == 0 ? 0 : chunk_size) : remainder;
+        const int chunk_start       = chunk_idx;
+        const int chunk_end         = std::min(chunk_start + chunk_size, primary_dim);
+        bool      is_last_iteration = (chunk_start + chunk_size >= primary_dim);
 
-        half* c_tile = lds_mem;
-
-        for(int chunk_idx = 0; chunk_idx < block_n; chunk_idx += chunk_size)
+        for(int wm = 0; wm < warp_tile_m; ++wm)
         {
-            const int chunk_start       = chunk_idx;
-            const int chunk_end         = std::min(chunk_start + chunk_size, block_n);
-            bool      is_last_iteration = (chunk_start + chunk_size >= block_n);
+            const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
 
-            for(int wm = 0; wm < warp_tile_m; ++wm)
+            if constexpr(is_col_major)
             {
-                const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
+                // Column-major: chunk along columns
                 for(int wn = 0; wn < warp_tile_n; ++wn)
                 {
                     const int n_offset = warp_n_base + wn * wmma_tile;
-
-                    // Skip fragments whose columns are entirely outside the current chunk
                     if(n_offset >= chunk_end || n_offset + wmma_tile <= chunk_start)
                     {
                         continue;
@@ -279,57 +283,9 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                                                  block_n);
                 }
             }
-            __syncthreads();
-
-            if(is_last_iteration)
-            {
-                load_shared_to_global<LAYOUT_C, block_m, last_chunk_size>(C,
-                                                                          c_tile,
-                                                                          block_row,
-                                                                          block_col + chunk_start,
-                                                                          M,
-                                                                          N,
-                                                                          tid,
-                                                                          blockDim.x);
-            }
             else
             {
-                load_shared_to_global<LAYOUT_C, block_m, chunk_size>(C,
-                                                                     c_tile,
-                                                                     block_row,
-                                                                     block_col + chunk_start,
-                                                                     M,
-                                                                     N,
-                                                                     tid,
-                                                                     blockDim.x);
-            }
-
-            __syncthreads();
-        }
-    }
-    else
-    {
-        // Calculate the total size of the output tile
-        constexpr int  total_tile_elements = block_m * block_n;
-        constexpr int  max_shared_elements = 2 * lds_size;
-        constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
-        constexpr int  chunk_size = needs_chunking ? max_shared_elements / block_n : block_m;
-        constexpr int  remainder  = block_m % chunk_size;
-        constexpr int  last_chunk_size
-            = (remainder == 0) ? (block_m == 0 ? 0 : chunk_size) : remainder;
-
-        half* c_tile = lds_mem;
-
-        for(int chunk_idx = 0; chunk_idx < block_m; chunk_idx += chunk_size)
-        {
-            const int chunk_start       = chunk_idx;
-            const int chunk_end         = std::min(chunk_start + chunk_size, block_m);
-            bool      is_last_iteration = (chunk_start + chunk_size >= block_m);
-
-            for(int wm = 0; wm < warp_tile_m; ++wm)
-            {
-                const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
-                // Skip warps not in the current chunk
+                // Row-major: chunk along rows
                 if(local_row < chunk_start || local_row >= chunk_end)
                 {
                     continue;
@@ -347,9 +303,23 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                                                  block_n);
                 }
             }
-            __syncthreads();
+        }
+        __syncthreads();
 
-            if(is_last_iteration)
+        if(is_last_iteration)
+        {
+            if constexpr(is_col_major)
+            {
+                load_shared_to_global<LAYOUT_C, block_m, last_chunk_size>(C,
+                                                                          c_tile,
+                                                                          block_row,
+                                                                          block_col + chunk_start,
+                                                                          M,
+                                                                          N,
+                                                                          tid,
+                                                                          full_block);
+            }
+            else
             {
                 load_shared_to_global<LAYOUT_C, last_chunk_size, block_n>(C,
                                                                           c_tile,
@@ -358,7 +328,21 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                                                                           M,
                                                                           N,
                                                                           tid,
-                                                                          blockDim.x);
+                                                                          full_block);
+            }
+        }
+        else
+        {
+            if constexpr(is_col_major)
+            {
+                load_shared_to_global<LAYOUT_C, block_m, chunk_size>(C,
+                                                                     c_tile,
+                                                                     block_row,
+                                                                     block_col + chunk_start,
+                                                                     M,
+                                                                     N,
+                                                                     tid,
+                                                                     full_block);
             }
             else
             {
@@ -369,11 +353,10 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                                                                      M,
                                                                      N,
                                                                      tid,
-                                                                     blockDim.x);
+                                                                     full_block);
             }
-
-            __syncthreads();
         }
+        __syncthreads();
     }
 #endif
 }

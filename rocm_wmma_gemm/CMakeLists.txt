@@ -37,9 +37,6 @@ target_compile_options(rocm_wmma_gemm PRIVATE
     -ffast-math         # Fast math operations (may break strict IEEE compliance)
 )
 
-# For tuner
-set_source_files_properties(config/tuner.cpp PROPERTIES COMPILE_OPTIONS -mcumode)
-
 # Add tuner executable
 add_executable(tuner config/tuner.cpp)
 
@@ -51,7 +48,7 @@ target_include_directories(tuner PUBLIC
 )
 
 # Link HIP libraries
-target_link_libraries(tuner PUBLIC ${HIP_LIBRARIES} benchmark::benchmark)
+target_link_libraries(tuner PUBLIC ${HIP_LIBRARIES} hiprtc benchmark::benchmark)
 
 # Add optimization flags
 target_compile_options(tuner PRIVATE

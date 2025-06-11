@@ -3,6 +3,7 @@
 import json
 import argparse
 from pathlib import Path
+from collections import defaultdict
 
 def generate_config_header(config_file, output_file):
     with open(config_file, 'r') as f:
@@ -113,7 +114,8 @@ namespace detail
     static constexpr size_t DEFAULT_CONFIG_IDX = KERNEL_VARIANTS - 1;
 
     // For finding closest configuration when exact match not found
-    struct size_config_entry {
+    struct size_config_entry
+    {
         size_t m, n, k;
         m_layout layout_a;
         m_layout layout_b;
@@ -144,29 +146,32 @@ namespace detail
     // Find closest configuration when exact match not found
     // This is a fallback mechanism only used when switch-case doesn't find a match
     constexpr size_t find_closest_config(size_t m, size_t n, size_t k,
-                                       m_layout layout_c,
-                                       m_layout layout_a,
-                                       m_layout layout_b)
+                                         m_layout layout_c,
+                                         m_layout layout_a,
+                                         m_layout layout_b)
     {
         // If empty, return default config
-        if (all_configs.empty()) {
+        if(all_configs.empty())
+        {
             return DEFAULT_CONFIG_IDX;
         }
 
         // Logarithmic distance metric (better for matrix operations)
         auto size_distance = [](size_t m1, size_t n1, size_t k1,
-                               size_t m2, size_t n2, size_t k2) -> double {
+                               size_t m2, size_t n2, size_t k2) -> double
+        {
             double log_diff_m = std::log2(static_cast<double>(m1)) - std::log2(static_cast<double>(m2));
             double log_diff_n = std::log2(static_cast<double>(n1)) - std::log2(static_cast<double>(n2));
             double log_diff_k = std::log2(static_cast<double>(k1)) - std::log2(static_cast<double>(k2));
-            return log_diff_m*log_diff_m + log_diff_n*log_diff_n + log_diff_k*log_diff_k;
+            return log_diff_m * log_diff_m + log_diff_n * log_diff_n + log_diff_k * log_diff_k;
         };
 
         // First try: find config with exact matching layout and closest size
         double min_distance = std::numeric_limits<double>::max();
         size_t best_idx = DEFAULT_CONFIG_IDX;
 
-        for (size_t i = 0; i < all_configs.size(); ++i) {
+        for(size_t i = 0; i < all_configs.size(); ++i)
+        {
             const auto& entry = all_configs[i];
 
             // Check if layout matches
@@ -175,9 +180,11 @@ namespace detail
                 (entry.layout_b == layout_b || entry.layout_b == m_layout::row_major) &&
                 (entry.layout_c == layout_c || entry.layout_c == m_layout::row_major);
 
-            if (layout_match) {
+            if(layout_match)
+            {
                 double dist = size_distance(m, n, k, entry.m, entry.n, entry.k);
-                if (dist < min_distance) {
+                if(dist < min_distance)
+                {
                     min_distance = dist;
                     best_idx = i;
                 }
@@ -185,17 +192,20 @@ namespace detail
         }
 
         // If we found a match with right layout, return it
-        if (min_distance < std::numeric_limits<double>::max()) {
+        if(min_distance < std::numeric_limits<double>::max())
+        {
             return all_configs[best_idx].config_idx;
         }
 
         // Second try: ignore layout and find closest size
         min_distance = std::numeric_limits<double>::max();
 
-        for (size_t i = 0; i < all_configs.size(); ++i) {
+        for(size_t i = 0; i < all_configs.size(); ++i)
+        {
             const auto& entry = all_configs[i];
             double dist = size_distance(m, n, k, entry.m, entry.n, entry.k);
-            if (dist < min_distance) {
+            if(dist < min_distance)
+            {
                 min_distance = dist;
                 best_idx = i;
             }
@@ -213,9 +223,9 @@ namespace detail
         // First try exact match via switch-case (most efficient)
 """
 
-    # Generate switch-case for size lookup
+    # Generate optimized switch-case for size lookup
     code += "        // First match by size\n"
-    code += "        switch (m)\n"
+    code += "        switch(m)\n"
     code += "        {\n"
 
     # Group by M dimension first
@@ -225,6 +235,52 @@ namespace detail
         if M not in m_groups:
             m_groups[M] = []
         m_groups[M].append(size_key)
+
+    def generate_layout_condition(layout_key):
+        """Generate layout condition string from layout key."""
+        a_layout, b_layout, c_layout = layout_key
+        conditions = []
+        if a_layout != "any":
+            conditions.append(f"layout_a == m_layout::{a_layout}")
+        if b_layout != "any":
+            conditions.append(f"layout_b == m_layout::{b_layout}")
+        if c_layout != "any":
+            conditions.append(f"layout_c == m_layout::{c_layout}")
+        return " && ".join(conditions) if conditions else ""
+
+    def merge_layout_conditions(layouts_dict):
+        """Merge layout conditions that map to the same config."""
+        # Group layouts by their config_idx
+        config_to_layouts = defaultdict(list)
+        for layout_key, config_idx in layouts_dict.items():
+            config_to_layouts[config_idx].append(layout_key)
+
+        # Generate merged conditions
+        merged_conditions = []
+        for config_idx, layout_keys in config_to_layouts.items():
+            if len(layout_keys) == 1:
+                # Single condition
+                condition = generate_layout_condition(layout_keys[0])
+                if condition:
+                    merged_conditions.append((f"({condition})", config_idx))
+                else:
+                    merged_conditions.append(("", config_idx))  # No condition needed
+            else:
+                # Multiple conditions that map to the same config - merge them
+                individual_conditions = []
+                for layout_key in layout_keys:
+                    condition = generate_layout_condition(layout_key)
+                    if condition:
+                        individual_conditions.append(f"({condition})")
+
+                if individual_conditions:
+                    merged_condition = " || ".join(individual_conditions)
+                    merged_conditions.append((f"({merged_condition})", config_idx))
+                else:
+                    # All layouts have no conditions - just return the config
+                    merged_conditions.append(("", config_idx))
+
+        return merged_conditions
 
     for M in sorted(m_groups.keys()):
         code += f"            case {M}:\n"
@@ -238,7 +294,7 @@ namespace detail
                 n_groups[N] = []
             n_groups[N].append(size_key)
 
-        code += "                switch (n)\n"
+        code += "                switch(n)\n"
         code += "                {\n"
 
         for N in sorted(n_groups.keys()):
@@ -248,7 +304,7 @@ namespace detail
             # Finally, check K dimension
             k_sizes = sorted(n_groups[N], key=lambda x: x[2])
 
-            code += "                        switch (k)\n"
+            code += "                        switch(k)\n"
             code += "                        {\n"
 
             for size_key in k_sizes:
@@ -258,28 +314,20 @@ namespace detail
                 code += f"                            case {K}:\n"
                 code += "                            {\n"
 
-                # Generate layout checks for this specific size
-                for layout_key, config_idx in layouts.items():
-                    a_layout, b_layout, c_layout = layout_key
+                # Generate merged layout checks for this specific size
+                merged_conditions = merge_layout_conditions(layouts)
 
-                    # Build layout condition
-                    conditions = []
-                    if a_layout != "any":
-                        conditions.append(f"layout_a == m_layout::{a_layout}")
-                    if b_layout != "any":
-                        conditions.append(f"layout_b == m_layout::{b_layout}")
-                    if c_layout != "any":
-                        conditions.append(f"layout_c == m_layout::{c_layout}")
+                # Sort by config_idx for consistent output
+                merged_conditions.sort(key=lambda x: x[1])
 
-                    # If we have conditions, write if statement
-                    if conditions:
-                        condition = " && ".join(conditions)
-                        code += f"                                if ({condition})\n"
+                for condition_str, config_idx in merged_conditions:
+                    if condition_str:
+                        code += f"                                if({condition_str})\n"
                         code += "                                {\n"
                         code += f"                                    return {config_idx};\n"
                         code += "                                }\n"
                     else:
-                        # If no conditions, always use this config
+                        # No condition needed - this is the default/fallback case
                         code += f"                                return {config_idx};\n"
 
                 code += "                                break;\n"
@@ -313,9 +361,9 @@ namespace detail
  * @return Tuned parameters for the given problem
  */
 constexpr gemm_params get_gemm_params(size_t m, size_t n, size_t k,
-                                     m_layout layout_c,
-                                     m_layout layout_a,
-                                     m_layout layout_b)
+                                       m_layout layout_c,
+                                       m_layout layout_a,
+                                       m_layout layout_b)
 {
     // Find the best configuration for this problem
     const size_t config_idx = detail::find_best_config(m, n, k, layout_c, layout_a, layout_b);
@@ -338,13 +386,13 @@ constexpr gemm_params get_gemm_params(size_t m, size_t n, size_t k,
  */
 constexpr size_t get_kernel_config_index(const gemm_params& params)
 {
-    for (size_t i = 0; i < detail::kernel_configs.size(); ++i)
+    for(size_t i = 0; i < detail::kernel_configs.size(); ++i)
     {
         const auto& config = detail::kernel_configs[i];
-        if (std::get<0>(config) == params.warps_m &&
-            std::get<1>(config) == params.warps_n &&
-            std::get<2>(config) == params.warp_tile_m &&
-            std::get<3>(config) == params.warp_tile_n)
+        if(std::get<0>(config) == params.warps_m &&
+           std::get<1>(config) == params.warps_n &&
+           std::get<2>(config) == params.warp_tile_m &&
+           std::get<3>(config) == params.warp_tile_n)
         {
             return i;
         }

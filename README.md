@@ -50,12 +50,17 @@ Run the executable after building:
 ./benchmark/rocblas_bench
 ```
 
-### Tuning
-The GEMM implementation includes a tuning system to find optimal configurations (warps and tile sizes) for specific matrix dimensions and layouts. The tuner:
-- Tests various combinations of warp and tile configurations
-- Supports different matrix layouts (row-major and column-major)
-- Generates a JSON configuration file used by the library
-- Measures actual performance for each configuration
+### Automatic Kernel Tuning
+The library includes a Bayesian Optimization-based tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
+
+#### **Tuning Approach**
+The tuner uses **Upper Confidence Bound (UCB) Bayesian Optimization** to efficiently explore the parameter space:
+
+- **Smart initialization**: Tests proven baseline configurations first, then uses Latin Hypercube Sampling for better parameter space coverage
+- **UCB acquisition function**: Balances exploration of uncertain regions with exploitation of promising configurations
+- **Gaussian Process modeling**: Learns from previous evaluations to predict performance of untried configurations
+- **Adaptive β scheduling**: Adjusts exploration vs exploitation based on budget size and improvement history
+
 
 To run the tuner:
 ```bash
@@ -66,14 +71,14 @@ python3 tune.py # Results written to gemm_config_tuned.json
 # Test specific sizes
 python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
 
+# Quick run: 25 evaluations
+python tune.py --budget 25
+
 # Test specific layouts
-python3 tune.py --layouts r,c,r c,c,r
+python3 tune.py --layouts r,c c,c
 
 # Different GPU architecture
 python3 tune.py --gpu-arch gfx1103
-
-# More thorough search
-python3 tune.py --initial-samples 20 --iterations 40
 
 # With output
 python3 tune.py --output output.json

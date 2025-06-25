@@ -102,13 +102,13 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
                                                                               stream);
         HIP_CHECK(hipPeekAtLastError());
         float elapsed_time = timer.stop(stream);
-        HIP_CHECK(hipDeviceSynchronize());
 
         double seconds = elapsed_time / 1000.0;
         state.SetIterationTime(seconds);
         double tflops = (total_flops / seconds) * 1e-12;
         total_tflops += tflops;
     }
+    HIP_CHECK(hipDeviceSynchronize());
 
     state.counters["TFLOPS"] = total_tflops / state.iterations();
     state.SetBytesProcessed(state.iterations() * ((M * K) + (K * N) + (M * N)) * sizeof(half));

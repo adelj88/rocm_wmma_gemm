@@ -28,107 +28,107 @@
 namespace rocm_wmma_gemm
 {
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto
-    load_to_shared(T* output, const T* input, int M, int N, int tid, int block_size) ->
+template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major,
                             void>::type
 {
-    using vector_type                      = float __attribute__((ext_vector_type(16)));
-    using half_vector_type                 = float __attribute__((ext_vector_type(8)));
-    static constexpr int vector_width      = (sizeof(vector_type) / sizeof(T));
-    static constexpr int half_vector_width = (sizeof(half_vector_type) / sizeof(T));
+    using vector_type                 = float __attribute__((ext_vector_type(8)));
+    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int        vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int i0 = i;
-        const int i1 = i + half_vector_width;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        const int row0   = i0 / BLOCK_N;
-        const int col0   = i0 % BLOCK_N;
-        const int gload0 = row0 * N + col0;
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int row   = idx / BLOCK_N;
+            const int col   = idx % BLOCK_N;
+            const int gload = row * N + col;
 
-        const int row1   = i1 / BLOCK_N;
-        const int col1   = i1 % BLOCK_N;
-        const int gload1 = row1 * N + col1;
-
-        *reinterpret_cast<half_vector_type*>(output + i0)
-            = *reinterpret_cast<const half_vector_type*>(input + gload0);
-        *reinterpret_cast<half_vector_type*>(output + i1)
-            = *reinterpret_cast<const half_vector_type*>(input + gload1);
+            *reinterpret_cast<vector_type*>(output + idx)
+                = *reinterpret_cast<const vector_type*>(input + gload);
+        }
     }
 }
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto
-    load_to_shared(T* output, const T* input, int M, int N, int tid, int block_size) ->
+template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major,
                             void>::type
 {
-    using vector_type                      = float __attribute__((ext_vector_type(16)));
-    using half_vector_type                 = float __attribute__((ext_vector_type(8)));
-    static constexpr int vector_width      = (sizeof(vector_type) / sizeof(T));
-    static constexpr int half_vector_width = (sizeof(half_vector_type) / sizeof(T));
+    using vector_type                 = float __attribute__((ext_vector_type(8)));
+    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int        vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int i0 = i;
-        const int i1 = i + half_vector_width;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        const int col0   = i0 / BLOCK_M;
-        const int row0   = i0 % BLOCK_M;
-        const int gload0 = col0 * M + row0;
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int col   = idx / BLOCK_M;
+            const int row   = idx % BLOCK_M;
+            const int gload = col * M + row;
 
-        const int col1   = i1 / BLOCK_M;
-        const int row1   = i1 % BLOCK_M;
-        const int gload1 = col1 * M + row1;
-
-        *reinterpret_cast<half_vector_type*>(output + i0)
-            = *reinterpret_cast<const half_vector_type*>(input + gload0);
-        *reinterpret_cast<half_vector_type*>(output + i1)
-            = *reinterpret_cast<const half_vector_type*>(input + gload1);
+            *reinterpret_cast<vector_type*>(output + idx)
+                = *reinterpret_cast<const vector_type*>(input + gload);
+        }
     }
 }
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto
-    load_to_shared(T* output, const T* input, int M, int N, int tid, int block_size) ->
+template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<MATRIX == m_input::matrix_a && ACCESS == m_layout::col_major,
                             void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(16)));
+    using vector_type                 = float __attribute__((ext_vector_type(8)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int        vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int col   = i / BLOCK_M;
-        const int row   = i % BLOCK_M;
-        int       gload = col * M + row;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        // Load full vector (buffer_load_b128 should handle out-of-bound accesses)
-        *reinterpret_cast<vector_type*>(output + i)
-            = *reinterpret_cast<const vector_type*>(input + gload);
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int col   = idx / BLOCK_M;
+            const int row   = idx % BLOCK_M;
+            const int gload = col * M + row;
+
+            *reinterpret_cast<vector_type*>(output + idx)
+                = *reinterpret_cast<const vector_type*>(input + gload);
+        }
     }
 }
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto
-    load_to_shared(T* output, const T* input, int M, int N, int tid, int block_size) ->
+template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<MATRIX == m_input::matrix_b && ACCESS == m_layout::row_major,
                             void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(16)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    using vector_type          = float __attribute__((ext_vector_type(8)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int row   = i / BLOCK_N;
-        const int col   = i % BLOCK_N;
-        int       gload = row * N + col;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        // Load full vector (buffer_load_b128 should handle out-of-bound accesses)
-        *reinterpret_cast<vector_type*>(output + i)
-            = *reinterpret_cast<const vector_type*>(input + gload);
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int row   = idx / BLOCK_N;
+            const int col   = idx % BLOCK_N;
+            const int gload = row * N + col;
+
+            *reinterpret_cast<vector_type*>(output + idx)
+                = *reinterpret_cast<const vector_type*>(input + gload);
+        }
     }
 }
 
@@ -137,7 +137,7 @@ __device__ __forceinline__ auto load_shared_to_global(
     T* output, T* input, int row, int col, int M, int N, int tid, int block_size) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(16)));
+    using vector_type                 = float __attribute__((ext_vector_type(8)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
     for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
@@ -174,7 +174,7 @@ __device__ __forceinline__ auto load_shared_to_global(
     T* output, T* input, int row, int col, int M, int N, int tid, int block_size) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(16)));
+    using vector_type                 = float __attribute__((ext_vector_type(8)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
     for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)

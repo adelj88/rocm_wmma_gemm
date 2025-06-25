@@ -71,9 +71,9 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     T* b_tiles_1 = lds_mem + lds_size + (block_m * block_k);
 
     // Each block is launched with a one-dimensional thread block.
-    const int full_block = blockDim.x;
-    const int half_block = full_block / 2;
-    const int tid        = threadIdx.x;
+    constexpr int full_block = warp_size * warps_m * warps_n;
+    constexpr int half_block = full_block / 2;
+    const int     tid        = threadIdx.x;
 
     const int cid = tid % half_block;
 
@@ -109,21 +109,19 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
 
     if(tid < half_block)
     {
-        load_to_shared<m_input::matrix_a, LAYOUT_A, block_m, block_k>(a_tiles_0,
-                                                                      A_tile_ptr,
-                                                                      M,
-                                                                      K,
-                                                                      cid,
-                                                                      half_block);
+        load_to_shared<m_input::matrix_a, LAYOUT_A, half_block, block_m, block_k>(a_tiles_0,
+                                                                                  A_tile_ptr,
+                                                                                  M,
+                                                                                  K,
+                                                                                  cid);
     }
     else
     {
-        load_to_shared<m_input::matrix_b, LAYOUT_B, block_k, block_n>(b_tiles_0,
-                                                                      B_tile_ptr,
-                                                                      K,
-                                                                      N,
-                                                                      cid,
-                                                                      half_block);
+        load_to_shared<m_input::matrix_b, LAYOUT_B, half_block, block_k, block_n>(b_tiles_0,
+                                                                                  B_tile_ptr,
+                                                                                  K,
+                                                                                  N,
+                                                                                  cid);
     }
     __syncthreads();
 
@@ -146,22 +144,20 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
             if(tid < half_block)
             {
                 const T* next_A = A_tile_ptr + block_k * global_mult_A;
-                load_to_shared<m_input::matrix_a, LAYOUT_A, block_m, block_k>(next_a,
-                                                                              next_A,
-                                                                              M,
-                                                                              K,
-                                                                              cid,
-                                                                              half_block);
+                load_to_shared<m_input::matrix_a, LAYOUT_A, half_block, block_m, block_k>(next_a,
+                                                                                          next_A,
+                                                                                          M,
+                                                                                          K,
+                                                                                          cid);
             }
             else
             {
                 const T* next_B = B_tile_ptr + block_k * global_mult_B;
-                load_to_shared<m_input::matrix_b, LAYOUT_B, block_k, block_n>(next_b,
-                                                                              next_B,
-                                                                              K,
-                                                                              N,
-                                                                              cid,
-                                                                              half_block);
+                load_to_shared<m_input::matrix_b, LAYOUT_B, half_block, block_k, block_n>(next_b,
+                                                                                          next_B,
+                                                                                          K,
+                                                                                          N,
+                                                                                          cid);
             }
         }
 

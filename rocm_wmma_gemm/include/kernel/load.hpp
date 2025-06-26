@@ -132,74 +132,90 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
-template<m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto load_shared_to_global(
-    T* output, T* input, int row, int col, int M, int N, int tid, int block_size) ->
+template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto
+    load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(8)));
+    using vector_type                 = float __attribute__((ext_vector_type(4)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    constexpr int vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int local_col = i / BLOCK_M;
-        const int local_row = i % BLOCK_M;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        const int global_row = row + local_row;
-        const int global_col = col + local_col;
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int local_col = idx / BLOCK_M;
+            const int local_row = idx % BLOCK_M;
 
-        // Check if this vector is entirely within bounds (down the column)
-        if(global_col < N && (global_row + vector_width - 1) < M)
-        {
-            // Full vector write
-            *reinterpret_cast<vector_type*>(output + global_col * M + global_row)
-                = *reinterpret_cast<const vector_type*>(input + i);
-        }
-        else if(global_col < N)
-        {
-            // Handle boundary case element by element
-            for(int v = 0; v < vector_width; v++)
+            const int global_row = row + local_row;
+            const int global_col = col + local_col;
+
+            // Check if this vector is entirely within bounds (down the column)
+            if(global_col < N && (global_row + vector_width - 1) < M)
             {
-                if((global_row + v) < M)
+                // Full vector write
+                *reinterpret_cast<vector_type*>(output + global_col * M + global_row)
+                    = *reinterpret_cast<const vector_type*>(input + idx);
+            }
+            else if(global_col < N)
+            {
+                // Handle boundary case element by element
+                for(int v = 0; v < vector_width; v++)
                 {
-                    output[global_col * M + global_row + v] = input[i + v];
+                    if((global_row + v) < M)
+                    {
+                        output[global_col * M + global_row + v] = input[idx + v];
+                    }
                 }
             }
         }
     }
 }
 
-template<m_layout ACCESS, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto load_shared_to_global(
-    T* output, T* input, int row, int col, int M, int N, int tid, int block_size) ->
+template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+__device__ __forceinline__ auto
+    load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(8)));
+    using vector_type                 = float __attribute__((ext_vector_type(4)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    for(int i = tid * vector_width; i < (BLOCK_M * BLOCK_N); i += block_size * vector_width)
+    constexpr int vectors_per_thread
+        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    for(int i = 0; i < vectors_per_thread; ++i)
     {
-        const int local_row = i / BLOCK_N;
-        const int local_col = i % BLOCK_N;
+        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        const int global_row = row + local_row;
-        const int global_col = col + local_col;
+        if(idx < (BLOCK_M * BLOCK_N))
+        {
+            const int local_row = idx / BLOCK_N;
+            const int local_col = idx % BLOCK_N;
 
-        // Check if this vector is entirely within bounds
-        if(global_row < M && global_col + vector_width - 1 < N)
-        {
-            // Full vector write
-            *reinterpret_cast<vector_type*>(output + global_row * N + global_col)
-                = *reinterpret_cast<const vector_type*>(input + i);
-        }
-        else if(global_row < M)
-        {
-            // Handle boundary case element by element
-            for(int v = 0; v < vector_width; v++)
+            const int global_row = row + local_row;
+            const int global_col = col + local_col;
+
+            // Check if this vector is entirely within bounds
+            if(global_row < M && (global_col + vector_width - 1) < N)
             {
-                if((global_col + v) < N)
+                // Full vector write
+                *reinterpret_cast<vector_type*>(output + global_row * N + global_col)
+                    = *reinterpret_cast<const vector_type*>(input + idx);
+            }
+            else if(global_row < M)
+            {
+                // Handle boundary case element by element
+                for(int v = 0; v < vector_width; v++)
                 {
-                    output[global_row * N + global_col + v] = input[i + v];
+                    if((global_col + v) < N)
+                    {
+                        output[global_row * N + global_col + v] = input[idx + v];
+                    }
                 }
             }
         }

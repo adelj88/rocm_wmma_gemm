@@ -306,50 +306,50 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         {
             if constexpr(is_col_major)
             {
-                load_shared_to_global<LAYOUT_C, block_m, last_chunk_size>(C,
-                                                                          c_tile,
-                                                                          block_row,
-                                                                          block_col + chunk_start,
-                                                                          M,
-                                                                          N,
-                                                                          tid,
-                                                                          full_block);
+                load_shared_to_global<LAYOUT_C, full_block, block_m, last_chunk_size>(
+                    C,
+                    c_tile,
+                    block_row,
+                    block_col + chunk_start,
+                    M,
+                    N,
+                    tid);
             }
             else
             {
-                load_shared_to_global<LAYOUT_C, last_chunk_size, block_n>(C,
-                                                                          c_tile,
-                                                                          block_row + chunk_start,
-                                                                          block_col,
-                                                                          M,
-                                                                          N,
-                                                                          tid,
-                                                                          full_block);
+                load_shared_to_global<LAYOUT_C, full_block, last_chunk_size, block_n>(
+                    C,
+                    c_tile,
+                    block_row + chunk_start,
+                    block_col,
+                    M,
+                    N,
+                    tid);
             }
         }
         else
         {
             if constexpr(is_col_major)
             {
-                load_shared_to_global<LAYOUT_C, block_m, chunk_size>(C,
-                                                                     c_tile,
-                                                                     block_row,
-                                                                     block_col + chunk_start,
-                                                                     M,
-                                                                     N,
-                                                                     tid,
-                                                                     full_block);
+                load_shared_to_global<LAYOUT_C, full_block, block_m, chunk_size>(C,
+                                                                                 c_tile,
+                                                                                 block_row,
+                                                                                 block_col
+                                                                                     + chunk_start,
+                                                                                 M,
+                                                                                 N,
+                                                                                 tid);
             }
             else
             {
-                load_shared_to_global<LAYOUT_C, chunk_size, block_n>(C,
-                                                                     c_tile,
-                                                                     block_row + chunk_start,
-                                                                     block_col,
-                                                                     M,
-                                                                     N,
-                                                                     tid,
-                                                                     full_block);
+                load_shared_to_global<LAYOUT_C, full_block, chunk_size, block_n>(C,
+                                                                                 c_tile,
+                                                                                 block_row
+                                                                                     + chunk_start,
+                                                                                 block_col,
+                                                                                 M,
+                                                                                 N,
+                                                                                 tid);
             }
         }
         __syncthreads();

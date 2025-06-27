@@ -28,36 +28,9 @@
 namespace rocm_wmma_gemm
 {
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major,
-                            void>::type
-{
-    using vector_type                 = float __attribute__((ext_vector_type(8)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-    constexpr int        vectors_per_thread
-        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    for(int i = 0; i < vectors_per_thread; ++i)
-    {
-        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
-
-        if(idx < (BLOCK_M * BLOCK_N))
-        {
-            const int row   = idx / BLOCK_N;
-            const int col   = idx % BLOCK_N;
-            const int gload = row * N + col;
-
-            *reinterpret_cast<vector_type*>(output + idx)
-                = *reinterpret_cast<const vector_type*>(input + gload);
-        }
-    }
-}
-
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major,
-                            void>::type
+    typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
     using vector_type                 = float __attribute__((ext_vector_type(8)));
     static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
@@ -80,36 +53,9 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<MATRIX == m_input::matrix_a && ACCESS == m_layout::col_major,
-                            void>::type
-{
-    using vector_type                 = float __attribute__((ext_vector_type(8)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-    constexpr int        vectors_per_thread
-        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    for(int i = 0; i < vectors_per_thread; ++i)
-    {
-        const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
-
-        if(idx < (BLOCK_M * BLOCK_N))
-        {
-            const int col   = idx / BLOCK_M;
-            const int row   = idx % BLOCK_M;
-            const int gload = col * M + row;
-
-            *reinterpret_cast<vector_type*>(output + idx)
-                = *reinterpret_cast<const vector_type*>(input + gload);
-        }
-    }
-}
-
-template<m_input MATRIX, m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
-__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<MATRIX == m_input::matrix_b && ACCESS == m_layout::row_major,
-                            void>::type
+    typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
     using vector_type          = float __attribute__((ext_vector_type(8)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));

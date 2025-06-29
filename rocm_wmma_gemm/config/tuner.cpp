@@ -30,7 +30,6 @@
 #include <iostream>
 #include <kernel/common.hpp>
 #include <memory>
-#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -105,17 +104,21 @@ struct test_data
         std::vector<half> h_A(M * K);
         std::vector<half> h_B(K * N);
 
-        std::mt19937                          gen(42);
-        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        constexpr float  values[]   = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
+        constexpr size_t num_values = sizeof(values) / sizeof(values[0]);
 
+        size_t idx = 0;
         for(size_t i = 0; i < M * K; ++i)
         {
-            h_A[i] = half(dist(gen));
+            h_A[i] = half(values[idx % num_values]);
+            idx++;
         }
 
+        idx = 0;
         for(size_t i = 0; i < K * N; ++i)
         {
-            h_B[i] = half(dist(gen));
+            h_B[i] = half(values[idx % num_values]);
+            idx++;
         }
 
         // Create stream

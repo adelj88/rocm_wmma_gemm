@@ -168,29 +168,4 @@ private:
     std::vector<T> data_; ///< Pointer to matrix data
 };
 
-/**
- * @brief Initialize matrix with random values
- * @tparam T Matrix element type
- * @tparam L Matrix layout
- * @param input Matrix to initialize
- */
-template<class T, m_layout L>
-void init_matrix(matrix<T, L>& input)
-{
-    std::random_device rd;
-    std::mt19937       gen(rd());
-    //std::uniform_real_distribution<float> dis(0.1f, 0.2f);
-    float tmp[5] = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
-
-    int l = 0;
-    for(size_t m = 0; m < input.m(); ++m)
-    {
-        for(size_t n = 0; n < input.n(); ++n)
-        {
-            input(m, n) = static_cast<T>(tmp[l % 5]);
-            l++;
-        }
-    }
-}
-
 #endif // HIP_MATRIX_HPP

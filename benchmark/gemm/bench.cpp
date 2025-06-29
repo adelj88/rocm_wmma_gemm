@@ -22,9 +22,8 @@
  * SOFTWARE.
  */
 
+#include <bench.hpp>
 #include <benchmark/benchmark.h>
-#include <common/hip_utils.hpp>
-#include <common/matrix.hpp>
 #include <gemm.hpp>
 #include <iomanip>
 

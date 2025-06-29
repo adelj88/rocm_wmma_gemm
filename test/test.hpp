@@ -10,8 +10,8 @@
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -23,6 +23,44 @@
  */
 
 #include <common/matrix.hpp>
+
+/**
+ * @brief Initialize matrix with random values
+ * @tparam T Matrix element type
+ * @tparam L Matrix layout
+ * @param input Matrix to initialize
+ */
+template<class T, m_layout L>
+void init_matrix(matrix<T, L>& input)
+{
+    constexpr float  values[]   = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
+    constexpr size_t num_values = sizeof(values) / sizeof(values[0]);
+
+    size_t idx = 0;
+    for(size_t m = 0; m < input.m(); ++m)
+    {
+        for(size_t n = 0; n < input.n(); ++n)
+        {
+            input(m, n) = static_cast<T>(values[idx % num_values]);
+            idx++;
+        }
+    }
+}
+
+/**
+ * @brief Initialize matrix as identity matrix
+ */
+template<typename T, m_layout L>
+void init_identity_matrix(matrix<T, L>& identity)
+{
+    for(size_t i = 0; i < identity.m(); ++i)
+    {
+        for(size_t j = 0; j < identity.n(); ++j)
+        {
+            identity(i, j) = (i == j) ? static_cast<T>(1.0f) : static_cast<T>(0.0f);
+        }
+    }
+}
 
 /**
  * @brief CPU reference implementation
@@ -45,33 +83,43 @@ void hgemm_cpu(matrix<half, L1>& C, const matrix<half, L2>& A, const matrix<half
 }
 
 /**
- * @brief Verify results against CPU reference
+ * @brief Verification metrics structure
+ */
+struct verification_metrics
+{
+    float  max_relative_error;
+    float  avg_relative_error;
+    float  ssim;
+    float  tolerance;
+    size_t error_i, error_j;
+    float  gpu_val, cpu_val;
+    size_t valid_comparisons;
+};
+
+/**
+ * @brief Calculate verification metrics
  */
 template<m_layout L>
-bool verify_results(const matrix<half, L>& gpu_result, const matrix<half, L>& cpu_result)
+verification_metrics calculate_metrics(const matrix<half, L>& gpu_result,
+                                       const matrix<half, L>& cpu_result)
 {
+    verification_metrics metrics = {};
+
     size_t m              = gpu_result.m();
     size_t n              = gpu_result.n();
     size_t total_elements = m * n;
 
+#ifdef ELEMENT_CHECK
     // Scale tolerance based on matrix size
     float size_factor = std::log2(std::max(m, n)) / 8.0f;
-    float tolerance   = 0.02f + 0.02f * size_factor;
+    metrics.tolerance = 0.02f + 0.02f * size_factor;
+#endif
 
-    std::cout << "Using tolerance: " << tolerance << " for matrix size " << m << "x" << n
-              << std::endl;
-
-    // Element-wise comparison
-    float  max_rel_diff      = 0.0f;
-    float  sum_rel_diff      = 0.0f;
-    size_t valid_comparisons = 0;
-    size_t max_rel_i = 0, max_rel_j = 0;
-    float  max_rel_gpu_val = 0.0f, max_rel_cpu_val = 0.0f;
-
-    // SSIM calculation variables
+    // Single pass: calculate means, max errors, and collect data for SSIM
     float sum_gpu = 0.0f, sum_cpu = 0.0f;
+    float sum_rel_diff = 0.0f;
+    float sum_gpu_abs = 0.0f, sum_cpu_abs = 0.0f; // For SSIM calculation
 
-    // First pass: calculate means and element-wise differences
     for(size_t i = 0; i < m; ++i)
     {
         for(size_t j = 0; j < n; ++j)
@@ -82,76 +130,88 @@ bool verify_results(const matrix<half, L>& gpu_result, const matrix<half, L>& cp
             sum_gpu += gpu_val;
             sum_cpu += cpu_val;
 
-            // Element-wise relative difference for non-zero values
-            if(std::abs(cpu_val) > 1e-5f)
-            {
-                float rel_diff = std::abs(gpu_val - cpu_val) / std::abs(cpu_val);
-                sum_rel_diff += rel_diff;
-                valid_comparisons++;
+            // Use absolute values for SSIM
+            sum_gpu_abs += std::abs(gpu_val);
+            sum_cpu_abs += std::abs(cpu_val);
 
-                if(rel_diff > max_rel_diff)
-                {
-                    max_rel_diff    = rel_diff;
-                    max_rel_i       = i;
-                    max_rel_j       = j;
-                    max_rel_gpu_val = gpu_val;
-                    max_rel_cpu_val = cpu_val;
-                }
+#ifdef ELEMENT_CHECK
+            float rel_diff = std::abs(gpu_val - cpu_val) / std::abs(cpu_val);
+            sum_rel_diff += rel_diff;
+            metrics.valid_comparisons++;
+
+            if(rel_diff > metrics.max_relative_error)
+            {
+                metrics.max_relative_error = rel_diff;
+                metrics.error_i            = i;
+                metrics.error_j            = j;
+                metrics.gpu_val            = gpu_val;
+                metrics.cpu_val            = cpu_val;
             }
+#endif
         }
     }
 
-    float mean_gpu     = sum_gpu / total_elements;
-    float mean_cpu     = sum_cpu / total_elements;
-    float avg_rel_diff = valid_comparisons > 0 ? sum_rel_diff / valid_comparisons : 0.0f;
+    float mean_gpu = sum_gpu / total_elements;
+    float mean_cpu = sum_cpu / total_elements;
+#ifdef ELEMENT_CHECK
+    metrics.avg_relative_error
+        = metrics.valid_comparisons > 0 ? sum_rel_diff / metrics.valid_comparisons : 0.0f;
+#endif
 
-    // Second pass: calculate variances and covariance for SSIM
-    float var_gpu = 0.0f, var_cpu = 0.0f, covar = 0.0f;
+    // SSIM calculation using absolute values
+    float mean_gpu_abs = sum_gpu_abs / total_elements;
+    float mean_cpu_abs = sum_cpu_abs / total_elements;
+
+    // Second pass: calculate SSIM components using absolute values
+    float var_gpu_abs = 0.0f, var_cpu_abs = 0.0f, covar_abs = 0.0f;
     for(size_t i = 0; i < m; ++i)
     {
         for(size_t j = 0; j < n; ++j)
         {
-            float gpu_val = static_cast<float>(gpu_result(i, j));
-            float cpu_val = static_cast<float>(cpu_result(i, j));
+            float gpu_val_abs = std::abs(static_cast<float>(gpu_result(i, j)));
+            float cpu_val_abs = std::abs(static_cast<float>(cpu_result(i, j)));
 
-            float gpu_diff = gpu_val - mean_gpu;
-            float cpu_diff = cpu_val - mean_cpu;
+            float gpu_diff_abs = gpu_val_abs - mean_gpu_abs;
+            float cpu_diff_abs = cpu_val_abs - mean_cpu_abs;
 
-            var_gpu += gpu_diff * gpu_diff;
-            var_cpu += cpu_diff * cpu_diff;
-            covar += gpu_diff * cpu_diff;
+            var_gpu_abs += gpu_diff_abs * gpu_diff_abs;
+            var_cpu_abs += cpu_diff_abs * cpu_diff_abs;
+            covar_abs += gpu_diff_abs * cpu_diff_abs;
         }
     }
 
-    var_gpu /= total_elements;
-    var_cpu /= total_elements;
-    covar /= total_elements;
+    var_gpu_abs /= total_elements;
+    var_cpu_abs /= total_elements;
+    covar_abs /= total_elements;
 
-    // Calculate SSIM
-    const float C1 = 0.01f * mean_cpu * mean_cpu;
-    const float C2 = 0.03f * var_cpu;
+    // Original SSIM formula, but with absolute values (always positive)
+    const float C1 = 0.01f * mean_cpu_abs * mean_cpu_abs;
+    const float C2 = 0.03f * var_cpu_abs;
 
-    float ssim = ((2 * mean_gpu * mean_cpu + C1) * (2 * covar + C2))
-                 / ((mean_gpu * mean_gpu + mean_cpu * mean_cpu + C1) * (var_gpu + var_cpu + C2));
+    metrics.ssim = ((2 * mean_gpu_abs * mean_cpu_abs + C1) * (2 * covar_abs + C2))
+                   / ((mean_gpu_abs * mean_gpu_abs + mean_cpu_abs * mean_cpu_abs + C1)
+                      * (var_gpu_abs + var_cpu_abs + C2));
 
-    // Output results
-    std::cout << "Maximum relative error: " << max_rel_diff << " at (" << max_rel_i << ","
-              << max_rel_j << ") GPU=" << max_rel_gpu_val << " CPU=" << max_rel_cpu_val
-              << std::endl;
-    std::cout << "Average relative error: " << avg_rel_diff << " (over " << valid_comparisons
-              << " valid comparisons)" << std::endl;
-    std::cout << "Structural similarity (SSIM): " << ssim << std::endl;
+    return metrics;
+}
 
-    // Validation criteria
-    bool element_wise_pass = max_rel_diff <= tolerance;
-    bool pattern_pass      = ssim > 0.98f;
+/**
+ * @brief Verify results with separate assertions
+ */
+template<m_layout L>
+void verify_results(const matrix<half, L>& gpu_result, const matrix<half, L>& cpu_result)
+{
+    verification_metrics metrics = calculate_metrics(gpu_result, cpu_result);
 
-    std::cout << "Element-wise validation: " << (element_wise_pass ? "PASSED" : "FAILED")
-              << std::endl;
-    std::cout << "Pattern validation: " << (pattern_pass ? "PASSED" : "FAILED") << std::endl;
+#ifdef ELEMENT_CHECK
+    // Element-wise validation
+    ASSERT_LE(metrics.max_relative_error, metrics.tolerance)
+        << "Maximum relative error " << metrics.max_relative_error << " exceeds tolerance "
+        << metrics.tolerance << " at position (" << metrics.error_i << "," << metrics.error_j << ")"
+        << " GPU=" << metrics.gpu_val << " CPU=" << metrics.cpu_val;
+#endif
 
-    bool passed = element_wise_pass && pattern_pass;
-    std::cout << "Overall validation: " << (passed ? "PASSED" : "FAILED") << std::endl;
-
-    return passed;
+    // Pattern validation
+    ASSERT_GT(metrics.ssim, 0.98f) << "SSIM " << metrics.ssim << " below threshold 0.98"
+                                   << " (avg error: " << metrics.avg_relative_error << ")";
 }

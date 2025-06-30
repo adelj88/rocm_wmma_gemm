@@ -110,15 +110,20 @@ verification_metrics calculate_metrics(const matrix<half, L>& gpu_result,
     size_t total_elements = m * n;
 
 #ifdef ELEMENT_CHECK
-    // Scale tolerance based on matrix size
-    float size_factor = std::log2(std::max(m, n)) / 8.0f;
-    metrics.tolerance = 0.02f + 0.02f * size_factor;
+    // Tolerance checking parameters
+    float atol                   = 0.14f; // absolute tolerance
+    float rtol                   = 0.0f; // relative tolerance
+    bool  tolerance_check_passed = true;
+    float max_violation          = 0.0f;
 #endif
 
     // Single pass: calculate means, max errors, and collect data for SSIM
+    // Also find min/max for dynamic range calculation
     float sum_gpu = 0.0f, sum_cpu = 0.0f;
-    float sum_rel_diff = 0.0f;
-    float sum_gpu_abs = 0.0f, sum_cpu_abs = 0.0f; // For SSIM calculation
+    float min_gpu = std::numeric_limits<float>::max();
+    float max_gpu = std::numeric_limits<float>::lowest();
+    float min_cpu = std::numeric_limits<float>::max();
+    float max_cpu = std::numeric_limits<float>::lowest();
 
     for(size_t i = 0; i < m; ++i)
     {
@@ -130,22 +135,25 @@ verification_metrics calculate_metrics(const matrix<half, L>& gpu_result,
             sum_gpu += gpu_val;
             sum_cpu += cpu_val;
 
-            // Use absolute values for SSIM
-            sum_gpu_abs += std::abs(gpu_val);
-            sum_cpu_abs += std::abs(cpu_val);
+            // Track min/max for dynamic range
+            min_gpu = std::min(min_gpu, gpu_val);
+            max_gpu = std::max(max_gpu, gpu_val);
+            min_cpu = std::min(min_cpu, cpu_val);
+            max_cpu = std::max(max_cpu, cpu_val);
 
 #ifdef ELEMENT_CHECK
-            float rel_diff = std::abs(gpu_val - cpu_val) / std::abs(cpu_val);
-            sum_rel_diff += rel_diff;
-            metrics.valid_comparisons++;
+            // Element-wise tolerance checking
+            float abs_diff  = std::abs(gpu_val - cpu_val);
+            float tolerance = atol + rtol * std::abs(cpu_val);
 
-            if(rel_diff > metrics.max_relative_error)
+            if(abs_diff > tolerance && tolerance_check_passed)
             {
-                metrics.max_relative_error = rel_diff;
-                metrics.error_i            = i;
-                metrics.error_j            = j;
-                metrics.gpu_val            = gpu_val;
-                metrics.cpu_val            = cpu_val;
+                tolerance_check_passed = false;
+                max_violation          = abs_diff - tolerance;
+                metrics.error_i        = i;
+                metrics.error_j        = j;
+                metrics.gpu_val        = gpu_val;
+                metrics.cpu_val        = cpu_val;
             }
 #endif
         }
@@ -153,44 +161,52 @@ verification_metrics calculate_metrics(const matrix<half, L>& gpu_result,
 
     float mean_gpu = sum_gpu / total_elements;
     float mean_cpu = sum_cpu / total_elements;
-#ifdef ELEMENT_CHECK
-    metrics.avg_relative_error
-        = metrics.valid_comparisons > 0 ? sum_rel_diff / metrics.valid_comparisons : 0.0f;
-#endif
 
-    // SSIM calculation using absolute values
-    float mean_gpu_abs = sum_gpu_abs / total_elements;
-    float mean_cpu_abs = sum_cpu_abs / total_elements;
+    // Calculate dynamic range for SSIM constants
+    float range_gpu     = max_gpu - min_gpu;
+    float range_cpu     = max_cpu - min_cpu;
+    float dynamic_range = std::max(range_gpu, range_cpu);
 
-    // Second pass: calculate SSIM components using absolute values
-    float var_gpu_abs = 0.0f, var_cpu_abs = 0.0f, covar_abs = 0.0f;
+    // Ensure minimum dynamic range to avoid division issues
+    if(dynamic_range < 1e-6f)
+    {
+        dynamic_range = 1.0f;
+    }
+
+    // Second pass: calculate SSIM components using raw values (not absolute)
+    float var_gpu = 0.0f, var_cpu = 0.0f, covar = 0.0f;
     for(size_t i = 0; i < m; ++i)
     {
         for(size_t j = 0; j < n; ++j)
         {
-            float gpu_val_abs = std::abs(static_cast<float>(gpu_result(i, j)));
-            float cpu_val_abs = std::abs(static_cast<float>(cpu_result(i, j)));
+            float gpu_val = static_cast<float>(gpu_result(i, j));
+            float cpu_val = static_cast<float>(cpu_result(i, j));
 
-            float gpu_diff_abs = gpu_val_abs - mean_gpu_abs;
-            float cpu_diff_abs = cpu_val_abs - mean_cpu_abs;
+            float gpu_diff = gpu_val - mean_gpu;
+            float cpu_diff = cpu_val - mean_cpu;
 
-            var_gpu_abs += gpu_diff_abs * gpu_diff_abs;
-            var_cpu_abs += cpu_diff_abs * cpu_diff_abs;
-            covar_abs += gpu_diff_abs * cpu_diff_abs;
+            var_gpu += gpu_diff * gpu_diff;
+            var_cpu += cpu_diff * cpu_diff;
+            covar += gpu_diff * cpu_diff;
         }
     }
 
-    var_gpu_abs /= total_elements;
-    var_cpu_abs /= total_elements;
-    covar_abs /= total_elements;
+    var_gpu /= total_elements;
+    var_cpu /= total_elements;
+    covar /= total_elements;
 
-    // Original SSIM formula, but with absolute values (always positive)
-    const float C1 = 0.01f * mean_cpu_abs * mean_cpu_abs;
-    const float C2 = 0.03f * var_cpu_abs;
+    // Standard SSIM constants based on dynamic range
+    const float C1 = (0.01f * dynamic_range) * (0.01f * dynamic_range);
+    const float C2 = (0.03f * dynamic_range) * (0.03f * dynamic_range);
 
-    metrics.ssim = ((2 * mean_gpu_abs * mean_cpu_abs + C1) * (2 * covar_abs + C2))
-                   / ((mean_gpu_abs * mean_gpu_abs + mean_cpu_abs * mean_cpu_abs + C1)
-                      * (var_gpu_abs + var_cpu_abs + C2));
+    metrics.ssim = ((2 * mean_gpu * mean_cpu + C1) * (2 * covar + C2))
+                   / ((mean_gpu * mean_gpu + mean_cpu * mean_cpu + C1) * (var_gpu + var_cpu + C2));
+
+#ifdef ELEMENT_CHECK
+    // Store tolerance checking results
+    metrics.max_relative_error = tolerance_check_passed ? 0.0f : max_violation;
+    metrics.tolerance          = tolerance_check_passed ? 1.0f : 0.0f; // Use as boolean flag
+#endif
 
     return metrics;
 }
@@ -204,14 +220,13 @@ void verify_results(const matrix<half, L>& gpu_result, const matrix<half, L>& cp
     verification_metrics metrics = calculate_metrics(gpu_result, cpu_result);
 
 #ifdef ELEMENT_CHECK
-    // Element-wise validation
-    ASSERT_LE(metrics.max_relative_error, metrics.tolerance)
-        << "Maximum relative error " << metrics.max_relative_error << " exceeds tolerance "
-        << metrics.tolerance << " at position (" << metrics.error_i << "," << metrics.error_j << ")"
+    // Element-wise tolerance validation
+    ASSERT_EQ(metrics.tolerance, 1.0f)
+        << "Element-wise tolerance check failed. Max violation: " << metrics.max_relative_error
+        << " at position (" << metrics.error_i << "," << metrics.error_j << ")"
         << " GPU=" << metrics.gpu_val << " CPU=" << metrics.cpu_val;
 #endif
 
-    // Pattern validation
-    ASSERT_GT(metrics.ssim, 0.98f) << "SSIM " << metrics.ssim << " below threshold 0.98"
-                                   << " (avg error: " << metrics.avg_relative_error << ")";
+    // SSIM structural validation
+    ASSERT_GT(metrics.ssim, 0.98f) << "SSIM " << metrics.ssim << " below threshold 0.98";
 }

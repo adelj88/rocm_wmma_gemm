@@ -32,9 +32,9 @@ template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(8)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-    constexpr int        vectors_per_thread
+    using vector_type          = float __attribute__((ext_vector_type(8)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     for(int i = 0; i < vectors_per_thread; ++i)
@@ -83,8 +83,8 @@ __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(4)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    using vector_type          = float __attribute__((ext_vector_type(4)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -128,8 +128,8 @@ __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
-    using vector_type                 = float __attribute__((ext_vector_type(4)));
-    static constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    using vector_type          = float __attribute__((ext_vector_type(4)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;

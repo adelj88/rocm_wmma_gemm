@@ -22,8 +22,11 @@
  * SOFTWARE.
  */
 
+#include <algorithm>
+#include <benchmark/benchmark.h>
 #include <common/hip_utils.hpp>
 #include <common/matrix.hpp>
+#include <iomanip>
 
 /**
  * @brief Initialize matrix with random values
@@ -34,7 +37,7 @@
 template<class T, m_layout L>
 void init_matrix(matrix<T, L>& input)
 {
-    constexpr float  values[] = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
+    constexpr float  values[]   = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
     constexpr size_t num_values = sizeof(values) / sizeof(values[0]);
 
     size_t idx = 0;
@@ -47,3 +50,9 @@ void init_matrix(matrix<T, L>& input)
         }
     }
 }
+
+class CustomReporter : public benchmark::ConsoleReporter
+{
+public:
+    explicit CustomReporter() : benchmark::ConsoleReporter(OO_ColorTabular) {}
+};

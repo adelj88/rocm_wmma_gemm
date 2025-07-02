@@ -25,9 +25,8 @@
 #ifndef ROCM_WMMA_GEMM_KERNEL_LAUNCHER_HPP
 #define ROCM_WMMA_GEMM_KERNEL_LAUNCHER_HPP
 
-#include <kernel/common.hpp>
-#include <kernel/config_generated.hpp>
-#include <kernel/kernel.hpp>
+#include "kernel/kernel.hpp"
+#include <rocm_wmma_gemm/kernel/config_generated.hpp>
 
 namespace rocm_wmma_gemm
 {

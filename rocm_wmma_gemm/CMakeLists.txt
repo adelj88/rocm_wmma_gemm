@@ -1,19 +1,19 @@
 # Create the config directory in the binary dir if it doesn't exist
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/kernel)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel)
 
 # Add configuration generation
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/include/kernel/config_generated.hpp
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel/config_generated.hpp
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config/generate_config.py
             ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config.json
-            ${CMAKE_CURRENT_BINARY_DIR}/include/kernel/config_generated.hpp
+            ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel/config_generated.hpp
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config.json
             ${CMAKE_CURRENT_SOURCE_DIR}/config/generate_config.py
     COMMENT "Generating GEMM configuration header"
 )
 
 add_custom_target(generate_gemm_config
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/include/kernel/config_generated.hpp
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel/config_generated.hpp
 )
 
 set_source_files_properties(src/gemm.cpp PROPERTIES COMPILE_OPTIONS -mcumode)

@@ -23,9 +23,8 @@
  */
 
 #include <bench.hpp>
-#include <benchmark/benchmark.h>
-#include <gemm.hpp>
 #include <iomanip>
+#include <rocm_wmma_gemm/gemm.hpp>
 
 template<m_layout a_layout, m_layout b_layout, m_layout c_layout>
 void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t batch_count)
@@ -83,8 +82,9 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
     HIP_CHECK(hipDeviceSynchronize());
 
     double total_tflops = 0.0;
-    double total_flops
-        = 2.0 * M * N * K * batch_count; // 2 operations per element (multiply and add)
+    double min_time     = std::numeric_limits<double>::max();
+    double max_time     = 0.0;
+    double total_flops  = 2.0 * M * N * K * batch_count;
 
     for(auto _ : state)
     {
@@ -100,16 +100,25 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
                                                                               batch_count,
                                                                               stream);
         HIP_CHECK(hipPeekAtLastError());
-        float elapsed_time = timer.stop(stream);
+        double elapsed_time = timer.stop(stream);
 
         double seconds = elapsed_time / 1000.0;
         state.SetIterationTime(seconds);
+
+        // Track min/max times
+        min_time = std::min(min_time, elapsed_time);
+        max_time = std::max(max_time, elapsed_time);
+
         double tflops = (total_flops / seconds) * 1e-12;
         total_tflops += tflops;
     }
     HIP_CHECK(hipDeviceSynchronize());
 
-    state.counters["TFLOPS"] = total_tflops / state.iterations();
+    // Set counters for the custom reporter
+    state.counters["avg_tflops"]  = total_tflops / state.iterations();
+    state.counters["min_time_ms"] = min_time;
+    state.counters["max_time_ms"] = max_time;
+
     state.SetBytesProcessed(state.iterations() * ((M * K) + (K * N) + (M * N)) * sizeof(half));
 
     HIP_CHECK(hipDeviceSynchronize());
@@ -167,7 +176,9 @@ int main(int argc, char* argv[])
         }
     }
 
-    // Run benchmarks
-    benchmark::RunSpecifiedBenchmarks();
+    // Use custom reporter instead of default
+    CustomReporter reporter;
+    benchmark::RunSpecifiedBenchmarks(&reporter);
+
     return 0;
 }

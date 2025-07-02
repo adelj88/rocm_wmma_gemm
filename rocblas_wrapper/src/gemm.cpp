@@ -1,5 +1,5 @@
-#include <gemm.hpp>
 #include <hip/hip_runtime.h>
+#include <rocblas_wrapper/gemm.hpp>
 
 namespace rocblas_wrapper
 {

@@ -1,6 +1,6 @@
-#include <gemm.hpp>
 #include <hip/hip_runtime.h>
-#include <kernel/kernel_launcher.hpp>
+#include <rocm_wmma_gemm/gemm.hpp>
+#include <rocm_wmma_gemm/kernel_launcher.hpp>
 
 namespace rocm_wmma_gemm
 {

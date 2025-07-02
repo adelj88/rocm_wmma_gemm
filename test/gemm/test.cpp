@@ -23,8 +23,8 @@
  */
 
 #include <common/hip_utils.hpp>
-#include <gemm.hpp>
 #include <gtest/gtest.h>
+#include <rocm_wmma_gemm/gemm.hpp>
 #include <test.hpp>
 
 template<m_layout layout_A, m_layout layout_B, m_layout layout_C>

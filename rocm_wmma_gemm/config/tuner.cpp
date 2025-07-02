@@ -28,8 +28,8 @@
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
 #include <iostream>
-#include <kernel/common.hpp>
 #include <memory>
+#include <rocm_wmma_gemm/kernel/common.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -254,7 +254,7 @@ bool compile_kernel(const config_params& config)
     std::vector<const char*> header_contents;
 
     // Add required headers - adjust paths as needed
-    std::string include_dir = PROJECT_SOURCE_DIR "/include";
+    std::string include_dir = PROJECT_SOURCE_DIR "/include/rocm_wmma_gemm";
 
     std::vector<std::string> required_headers = {include_dir + "/kernel/kernel.hpp",
                                                  include_dir + "/kernel/common.hpp",

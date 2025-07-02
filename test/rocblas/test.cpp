@@ -23,8 +23,8 @@
  */
 
 #include <common/hip_utils.hpp>
-#include <gemm.hpp>
 #include <gtest/gtest.h>
+#include <rocblas_wrapper/gemm.hpp>
 #include <test.hpp>
 
 template<m_layout layout>

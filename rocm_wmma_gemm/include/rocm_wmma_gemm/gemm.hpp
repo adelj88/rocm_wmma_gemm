@@ -25,7 +25,7 @@
 #ifndef ROCM_WMMA_GEMM_HPP
 #define ROCM_WMMA_GEMM_HPP
 
-#include <kernel/common.hpp>
+#include "kernel/common.hpp"
 
 namespace rocm_wmma_gemm
 {

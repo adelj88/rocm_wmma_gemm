@@ -70,7 +70,7 @@ def generate_config_header(config_file, output_file):
 #ifndef ROCM_WMMA_GEMM_CONFIG_GENERATED_HPP
 #define ROCM_WMMA_GEMM_CONFIG_GENERATED_HPP
 
-#include <kernel/common.hpp>
+#include <rocm_wmma_gemm/kernel/common.hpp>
 #include <array>
 #include <tuple>
 #include <cstddef>

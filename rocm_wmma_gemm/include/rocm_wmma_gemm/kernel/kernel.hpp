@@ -25,11 +25,11 @@
 #ifndef ROCM_WMMA_KERNEL_HPP
 #define ROCM_WMMA_KERNEL_HPP
 
-#include <kernel/common.hpp>
-#include <kernel/fragment.hpp>
-#include <kernel/load.hpp>
-#include <kernel/mapping.hpp>
-#include <kernel/wmma.hpp>
+#include "common.hpp"
+#include "fragment.hpp"
+#include "load.hpp"
+#include "mapping.hpp"
+#include "wmma.hpp"
 
 namespace rocm_wmma_gemm
 {

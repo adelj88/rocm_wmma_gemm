@@ -63,12 +63,15 @@ public:
     public:
         __device__ __forceinline__ proxy(frag_vec& v, int i) : vec_ref(v), index(i) {}
 
-        __device__ __forceinline__ proxy& operator=(type value)
+        template<typename U = type>
+        __device__ __forceinline__ auto operator=(type value) ->
+            typename std::enable_if<!std::is_same<U, T>::value, proxy&>::type
         {
             vec_ref[index] = value;
             return *this;
         }
 
+        // This operator handles the T type and also serves as fallback when type == T
         __device__ __forceinline__ proxy& operator=(const T& value)
         {
             vec_ref[index] = static_cast<type>(value);

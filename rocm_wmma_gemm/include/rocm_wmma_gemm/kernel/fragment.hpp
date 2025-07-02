@@ -160,9 +160,10 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major),
                             void>::type
 {
-    constexpr int width    = (TILE * sizeof(T)) / sizeof(float4);
-    const float4* src_ptr  = reinterpret_cast<const float4*>(data);
-    float4*       dest_ptr = reinterpret_cast<float4*>(&frag.get());
+    using vector_type           = float __attribute__((ext_vector_type(4)));
+    constexpr int      width    = (TILE * sizeof(T)) / sizeof(vector_type);
+    const vector_type* src_ptr  = reinterpret_cast<const vector_type*>(data);
+    vector_type*       dest_ptr = reinterpret_cast<vector_type*>(&frag.get());
     for(int i = 0; i < width; ++i)
     {
         dest_ptr[i] = src_ptr[i];
@@ -200,9 +201,10 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major),
                             void>::type
 {
-    constexpr int width    = (TILE * sizeof(T)) / sizeof(float4);
-    const float4* src_ptr  = reinterpret_cast<const float4*>(data);
-    float4*       dest_ptr = reinterpret_cast<float4*>(&frag.get());
+    using vector_type           = float __attribute__((ext_vector_type(4)));
+    constexpr int      width    = (TILE * sizeof(T)) / sizeof(vector_type);
+    const vector_type* src_ptr  = reinterpret_cast<const vector_type*>(data);
+    vector_type*       dest_ptr = reinterpret_cast<vector_type*>(&frag.get());
     for(int i = 0; i < width; ++i)
     {
         dest_ptr[i] = src_ptr[i];
@@ -214,7 +216,6 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::row_major && !USE_SHARED, void>::type
 {
-#pragma unroll
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r = i * 2;
@@ -230,7 +231,6 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::row_major && USE_SHARED, void>::type
 {
-#pragma unroll
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r               = i * 2;
@@ -243,7 +243,6 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::col_major && !USE_SHARED, void>::type
 {
-#pragma unroll
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r = i * 2;
@@ -259,7 +258,6 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::col_major && USE_SHARED, void>::type
 {
-#pragma unroll
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r               = i * 2;

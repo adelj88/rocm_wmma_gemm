@@ -92,6 +92,7 @@ python3 tune.py --gpu-arch gfx1103
 
 # Custom output file
 python3 tune.py --output my_config.json
+```
 
 ## Performance Results
 - [View detailed square matrix benchmarks](docs/square.md)

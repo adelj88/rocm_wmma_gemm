@@ -3,38 +3,42 @@
 import subprocess
 import json
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, ConstantKernel
-from sklearn.preprocessing import StandardScaler
-import warnings
+import random
 import re
 import argparse
 import sys
+import warnings
 
 warnings.filterwarnings('ignore')
 
-class UCBBayesianTuner:
-    """Clean UCB-based Bayesian Optimization for GEMM kernel tuning."""
+class GAWMMATuner:
+    """Genetic Algorithm-based WMMA kernel tuner for 4-parameter discrete space."""
 
-    def __init__(self, max_shared_memory=65336, gpu_arch="gfx1100", baselines=None):
+    def __init__(self, max_shared_memory=65336, gpu_arch="gfx1100", baselines=None, random_seed=42):
         self.max_shared_memory = max_shared_memory
         self.gpu_arch = gpu_arch
 
-        # Define baseline configurations to always try first
+        # Set random seed for reproducible results
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        self.random_seed = random_seed
+
+        # Define baseline configurations to seed initial population
         if baselines is None:
             self.baselines = [
                 (4, 4, 4, 4),  # Original baseline
                 (2, 4, 4, 4),  # Fewer warps_m
+                (4, 2, 4, 4),  # Fewer warps_n
                 (2, 2, 4, 4),  # Smaller warps, larger tiles
                 (4, 2, 2, 4),  # Asymmetric warps
                 (2, 4, 4, 2),  # Asymmetric warps (flipped)
+                (4, 4, 4, 2),  # Original warps, smaller tiles
                 (4, 4, 2, 2),  # Original warps, smaller tiles
-                (2, 2, 2, 2),  # Conservative baseline
             ]
         else:
             self.baselines = baselines
 
-        # Parameter space
+        # Parameter space - 4 parameters only
         self.valid_values = {
             'warps_m': [1, 2, 4, 8],
             'warps_n': [1, 2, 4, 8],
@@ -46,38 +50,32 @@ class UCBBayesianTuner:
         self.valid_configs = self._generate_valid_configs()
         print(f"Generated {len(self.valid_configs)} valid configurations")
 
-        # Gaussian Process setup
-        kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5)
-        self.gp = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=8,
-            alpha=1e-6,
-            normalize_y=True
-        )
-        self.scaler = StandardScaler()
-
-        # UCB parameters
-        self.initial_beta = 3.0  # Higher exploration at start
-        self.final_beta = 0.1    # Low exploration at end
+        # GA Parameters - optimized for ~200 configuration space
+        self.population_size = 15
+        self.elite_size = 3         # Keep best 3 each generation (20%)
+        self.mutation_rate = 0.2    # 20% mutation rate for smaller space
+        self.crossover_rate = 0.85  # 85% crossover rate
 
         # State tracking
-        self.X_observed = []
-        self.y_observed = []
-        self.total_evaluations = 0
-        self.improvement_history = []
-        self.best_found_time = float('inf')
-        self.stagnation_counter = 0
+        self.evaluated_configs = {}  # Cache results to avoid re-evaluation
+        self.generation_history = []
+        self.all_time_best = None
+        self.all_time_best_fitness = float('inf')
 
     def _generate_valid_configs(self):
         """Generate all valid discrete configurations."""
         configs = []
+        count = 0
         for warps_m in self.valid_values['warps_m']:
             for warps_n in self.valid_values['warps_n']:
                 for warp_tile_m in self.valid_values['warp_tile_m']:
                     for warp_tile_n in self.valid_values['warp_tile_n']:
+                        count += 1
                         config = (warps_m, warps_n, warp_tile_m, warp_tile_n)
                         if self._check_constraints(config):
                             configs.append(config)
+
+        print(f"Checked {count} total combinations, {len(configs)} valid after constraints")
         return configs
 
     def _check_constraints(self, config):
@@ -98,199 +96,115 @@ class UCBBayesianTuner:
         if memory_bytes > self.max_shared_memory:
             return False
 
-        # Resource constraint
+        # Resource constraint - RDNA GPUs: max 1024 threads per block, warp size = 32
         total_warps = warps_m * warps_n
-        if total_warps > 16:
+        if total_warps > 32:  # 1024 threads ÷ 32 threads per warp = 32 warps max
             return False
 
         return True
 
-    def _config_to_features(self, config):
-        """Convert config tuple to feature vector for GP."""
-        return np.array(config, dtype=np.float64)
+    def _generate_random_individual(self):
+        """Generate a random valid individual."""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            individual = tuple(
+                random.choice(self.valid_values[param])
+                for param in ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n']
+            )
+            if self._check_constraints(individual):
+                return individual
 
-    def _latin_hypercube_sampling(self, untried_configs, n_samples):
-        """Generate Latin Hypercube samples from untried configurations."""
-        if len(untried_configs) <= n_samples:
-            return untried_configs
+        # Fallback to first baseline if random generation fails
+        return self.baselines[0]
 
-        # Convert configs to feature matrix
-        feature_matrix = np.array([self._config_to_features(config) for config in untried_configs])
+    def _initialize_population(self):
+        """Initialize population with baselines + random individuals."""
+        population = []
 
-        # For each dimension, divide into n_samples strata and sample one from each
-        n_dims = feature_matrix.shape[1]
-        selected_indices = []
+        # Add baselines first (ensure they're valid)
+        for baseline in self.baselines:
+            if self._check_constraints(baseline):
+                population.append(baseline)
 
-        for dim in range(n_dims):
-            # Get unique values in this dimension and sort them
-            unique_values = np.unique(feature_matrix[:, dim])
+        # Fill remaining slots with random individuals
+        while len(population) < self.population_size:
+            individual = self._generate_random_individual()
+            # Avoid duplicates
+            if individual not in population:
+                population.append(individual)
 
-            # If we have fewer unique values than samples, just take all
-            if len(unique_values) <= n_samples:
-                continue
+        return population
 
-            # Divide into strata
-            strata_size = len(unique_values) // n_samples
-            strata_indices = []
+    def _crossover(self, parent1, parent2):
+        """Uniform crossover - randomly pick each gene from either parent."""
+        if random.random() > self.crossover_rate:
+            return parent1, parent2
 
-            for i in range(n_samples):
-                start_idx = i * strata_size
-                end_idx = (i + 1) * strata_size if i < n_samples - 1 else len(unique_values)
-
-                # Randomly select one value from this stratum
-                selected_value = unique_values[np.random.randint(start_idx, end_idx)]
-
-                # Find configs with this value in this dimension
-                valid_indices = np.where(feature_matrix[:, dim] == selected_value)[0]
-                strata_indices.extend(valid_indices)
-
-            selected_indices = strata_indices if not selected_indices else list(set(selected_indices) & set(strata_indices))
-
-        # If stratification gives us too few samples, fall back to random
-        if len(selected_indices) < n_samples:
-            selected_indices = np.random.choice(len(untried_configs), size=min(n_samples, len(untried_configs)), replace=False)
-        else:
-            # Randomly sample from stratified candidates
-            selected_indices = np.random.choice(selected_indices, size=min(n_samples, len(selected_indices)), replace=False)
-
-        return [untried_configs[i] for i in selected_indices]
-
-    def _get_beta(self, evaluation_num, max_evaluations):
-        """Calculate UCB beta parameter with budget-aware adaptive scheduling."""
-        progress = evaluation_num / max_evaluations
-
-        # Adjust beta schedule based on budget size
-        if max_evaluations <= 30:
-            # Small budget: faster decay to exploitation
-            decay_rate = 1.5
-        elif max_evaluations <= 60:
-            # Medium budget: balanced decay
-            decay_rate = 1.0
-        else:
-            # Large budget: slower decay for more exploration
-            decay_rate = 0.7
-
-        # Adaptive based on improvement rate
-        if len(self.improvement_history) >= 3:
-            recent_improvements = len([x for x in self.improvement_history
-                                     if x >= evaluation_num - min(10, max_evaluations // 4)])
-            if recent_improvements >= 2:
-                # Recent improvements -> keep exploring
-                beta = max(self.final_beta, self.initial_beta - decay_rate * 0.5 * progress)
+        child1, child2 = [], []
+        for i in range(len(parent1)):
+            if random.random() < 0.5:
+                child1.append(parent1[i])
+                child2.append(parent2[i])
             else:
-                # No recent improvements -> exploit more
-                beta = self.final_beta + (self.initial_beta - self.final_beta) * (1 - progress * decay_rate) ** 2
-        else:
-            # Not enough data -> use linear decay with budget-aware rate
-            beta = self.initial_beta - (self.initial_beta - self.final_beta) * progress * decay_rate
+                child1.append(parent2[i])
+                child2.append(parent1[i])
 
-        return max(self.final_beta, beta)
-        """Calculate UCB beta parameter with adaptive scheduling."""
-        progress = evaluation_num / max_evaluations
+        return tuple(child1), tuple(child2)
 
-        # Adaptive based on improvement rate
-        if len(self.improvement_history) >= 3:
-            recent_improvements = len([x for x in self.improvement_history
-                                     if x >= evaluation_num - 10])
-            if recent_improvements >= 2:
-                # Recent improvements -> keep exploring
-                beta = max(self.final_beta, self.initial_beta - 0.5 * progress)
-            else:
-                # No recent improvements -> exploit more
-                beta = self.final_beta + (self.initial_beta - self.final_beta) * (1 - progress) ** 2
-        else:
-            # Not enough data -> use linear decay
-            beta = self.initial_beta - (self.initial_beta - self.final_beta) * progress
+    def _mutate(self, individual):
+        """Mutate individual by randomly changing some parameters."""
+        if random.random() > self.mutation_rate:
+            return individual
 
-        return max(self.final_beta, beta)
+        individual_list = list(individual)
+        param_names = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n']
 
-    def _ucb_acquisition(self, configs, beta):
-        """Upper Confidence Bound acquisition function for minimization."""
-        if len(self.X_observed) == 0:
-            return np.random.random(len(configs))
+        # Mutate 1 parameter (smaller space, less aggressive mutation)
+        num_mutations = 1
+        for _ in range(num_mutations):
+            param_idx = random.randint(0, len(param_names) - 1)
+            param_name = param_names[param_idx]
+            individual_list[param_idx] = random.choice(self.valid_values[param_name])
 
-        # Convert configs to features and scale
-        X_candidates = np.array([self._config_to_features(config) for config in configs])
-        X_scaled = self.scaler.transform(X_candidates)
+        return tuple(individual_list)
 
-        # Get GP predictions
-        mu, sigma = self.gp.predict(X_scaled, return_std=True)
+    def _repair_individual(self, individual):
+        """Repair invalid individual by adjusting parameters."""
+        if self._check_constraints(individual):
+            return individual
 
-        # UCB for minimization: μ - β * σ (lower is better)
-        ucb_values = mu - beta * sigma
+        # Try several repair attempts
+        for _ in range(20):
+            # Try mutating to fix constraints
+            repaired = self._mutate(individual)
+            if self._check_constraints(repaired):
+                return repaired
 
-        # Convert to acquisition scores (higher = better candidate)
-        acquisition_scores = -ucb_values
+        # If repair fails, generate a new random individual
+        return self._generate_random_individual()
 
-        return acquisition_scores
+    def _tournament_selection(self, population, fitnesses, tournament_size=3):
+        """Tournament selection for parent selection."""
+        selected = []
+        for _ in range(len(population)):
+            # Select tournament_size random individuals
+            tournament_indices = random.sample(range(len(population)),
+                                             min(tournament_size, len(population)))
+            tournament_fitnesses = [fitnesses[i] for i in tournament_indices]
 
-    def _calculate_meaningful_improvement_threshold(self):
-        """Calculate threshold for meaningful improvements from historical data."""
-        if len(self.y_observed) < 3:
-            return 0.02  # Default 2%
+            # Find winner (lowest fitness for minimization)
+            winner_idx = tournament_indices[np.argmin(tournament_fitnesses)]
+            selected.append(population[winner_idx])
 
-        improvements = []
-        for i in range(1, len(self.y_observed)):
-            current_best = min(self.y_observed[:i])
-            if self.y_observed[i] < current_best:
-                rel_improvement = (current_best - self.y_observed[i]) / current_best
-                improvements.append(rel_improvement)
-
-        if improvements:
-            return np.median(improvements)
-        else:
-            return 0.02
-
-    def _should_stop_early(self, configs_tried, max_evaluations):
-        """Simple principled stopping: only when all configs tried."""
-        untried_configs = [c for c in self.valid_configs if c not in configs_tried]
-        if not untried_configs:
-            print("  → All configurations evaluated")
-            return True
-        return False  # Otherwise, run to budget completion
-
-    def _select_next_config(self, configs_tried, max_evaluations):
-        """Select next configuration using UCB acquisition function."""
-        untried_configs = [c for c in self.valid_configs if c not in configs_tried]
-        if not untried_configs:
-            return None
-
-        # Try baselines first (only at the beginning)
-        if len(configs_tried) < len(self.baselines):
-            for baseline in self.baselines:
-                if baseline in untried_configs:
-                    return baseline
-
-        # If not enough data for GP, use Latin Hypercube Sampling
-        if len(self.X_observed) < 3:
-            # Try to get 5-8 good initial samples using LHS
-            n_lhs_samples = min(8, len(untried_configs), max_evaluations - len(configs_tried))
-            if n_lhs_samples > 0:
-                lhs_candidates = self._latin_hypercube_sampling(untried_configs, n_lhs_samples)
-                return lhs_candidates[0]  # Return first LHS candidate
-            else:
-                return untried_configs[np.random.randint(len(untried_configs))]
-
-        # Use UCB acquisition function
-        current_beta = self._get_beta(self.total_evaluations, max_evaluations)
-        acquisition_scores = self._ucb_acquisition(untried_configs, current_beta)
-
-        # Select config with highest acquisition score
-        best_idx = np.argmax(acquisition_scores)
-        return untried_configs[best_idx]
-
-    def _parse_benchmark_output(self, output):
-        """Parse benchmark output to extract timing."""
-        lines = output.strip().split('\n')
-        for line in lines:
-            if 'dynamic_kernel/manual_time' in line:
-                match = re.search(r'(\d+\.?\d*)\s*ms', line)
-                if match:
-                    return float(match.group(1))
-        return None
+        return selected
 
     def _evaluate_config(self, M, N, K, layout_a, layout_b, layout_c, config):
         """Evaluate a configuration and return timing."""
+        # Check cache first
+        cache_key = (M, N, K, layout_a, layout_b, layout_c, config)
+        if cache_key in self.evaluated_configs:
+            return self.evaluated_configs[cache_key]
+
         warps_m, warps_n, warp_tile_m, warp_tile_n = config
 
         try:
@@ -304,125 +218,157 @@ class UCBBayesianTuner:
             ], capture_output=True, text=True, timeout=60, check=False)
 
             if result.returncode != 0:
-                return float('inf')
+                time_ms = float('inf')
+            else:
+                time_ms = self._parse_benchmark_output(result.stdout)
+                if time_ms is None:
+                    time_ms = float('inf')
 
-            time_ms = self._parse_benchmark_output(result.stdout)
-            if time_ms is None:
-                return float('inf')
-
+            # Cache result
+            self.evaluated_configs[cache_key] = time_ms
             return time_ms
 
         except Exception:
+            self.evaluated_configs[cache_key] = float('inf')
             return float('inf')
 
-    def tune_ab_layout(self, M, N, K, layout_a, layout_b, max_evaluations=40):
-        """Tune for (A,B) layout pair using UCB-based BO."""
+    def _parse_benchmark_output(self, output):
+        """Parse benchmark output to extract timing."""
+        lines = output.strip().split('\n')
+        for line in lines:
+            if 'dynamic_kernel/manual_time' in line:
+                match = re.search(r'(\d+\.?\d*)\s*ms', line)
+                if match:
+                    return float(match.group(1))
+        return None
+
+    def _evaluate_population(self, population, M, N, K, layout_a, layout_b):
+        """Evaluate entire population and return fitness values."""
+        fitnesses = []
+        for individual in population:
+            fitness = self._evaluate_config(M, N, K, layout_a, layout_b, 0, individual)
+            fitnesses.append(fitness)
+
+            # Track all-time best
+            if fitness < self.all_time_best_fitness:
+                self.all_time_best_fitness = fitness
+                self.all_time_best = individual
+            elif fitness == self.all_time_best_fitness and self.all_time_best_fitness != float('inf'):
+                # Equal performance - update to newer config
+                self.all_time_best = individual
+
+        return fitnesses
+
+    def tune_ab_layout(self, M, N, K, layout_a, layout_b, max_evaluations=60):
+        """Tune for (A,B) layout pair using Genetic Algorithm."""
         print(f"\nTuning {M}×{N}×{K} with layout A={layout_a}, B={layout_b}")
+        print(f"GA Parameters: pop_size={self.population_size}, elite={self.elite_size}, "
+              f"mutation_rate={self.mutation_rate}, crossover_rate={self.crossover_rate}")
 
         # Reset state for this problem
-        self.X_observed = []
-        self.y_observed = []
-        self.total_evaluations = 0
-        self.improvement_history = []
-        self.best_found_time = float('inf')
-        self.stagnation_counter = 0
+        self.evaluated_configs = {}
+        self.generation_history = []
+        self.all_time_best = None
+        self.all_time_best_fitness = float('inf')
 
-        configs_tried = set()
-        best_config = None
-        best_time = float('inf')
+        # Initialize population
+        population = self._initialize_population()
+        evaluations_used = 0
+        generation = 0
 
-        print("Starting UCB-based Bayesian Optimization...")
-        print(f"Beta schedule: initial={self.initial_beta}, final={self.final_beta}")
+        print("Starting Genetic Algorithm...")
 
-        while self.total_evaluations < max_evaluations:
-            # Select next config using UCB
-            config = self._select_next_config(configs_tried, max_evaluations)
+        while evaluations_used < max_evaluations:
+            generation += 1
 
-            if config is None:
-                print("  No more valid configs to try")
-                break
+            # Evaluate population
+            fitnesses = self._evaluate_population(population, M, N, K, layout_a, layout_b)
+            evaluations_used += len(population)
 
-            configs_tried.add(config)
+            # Track generation stats
+            valid_fitnesses = [f for f in fitnesses if f != float('inf')]
+            if valid_fitnesses:
+                gen_best = min(fitnesses)
+                gen_avg = np.mean(valid_fitnesses)
+                gen_best_idx = np.argmin(fitnesses)
+                gen_best_individual = population[gen_best_idx]
 
-            # Evaluate with C=0 (row_major output)
-            time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, 0, config)
+                self.generation_history.append({
+                    'generation': generation,
+                    'best_fitness': gen_best,
+                    'avg_fitness': gen_avg,
+                    'best_individual': gen_best_individual
+                })
 
-            self.total_evaluations += 1
-
-            if time_ms == float('inf'):
-                continue
-
-            # Update GP training data
-            self.X_observed.append(self._config_to_features(config))
-            self.y_observed.append(time_ms)
-
-            # Fit GP model (need at least 3 points)
-            if len(self.X_observed) >= 3:
-                try:
-                    X_array = np.array(self.X_observed)
-                    self.scaler.fit(X_array)
-                    X_scaled = self.scaler.transform(X_array)
-                    self.gp.fit(X_scaled, np.array(self.y_observed))
-                except Exception as e:
-                    print(f"    GP fitting failed: {e}")
-
-            # Track best config and improvements
-            if time_ms < best_time:
-                best_time = time_ms
-                best_config = config
-                self.improvement_history.append(self.total_evaluations)
-                self.stagnation_counter = 0
-
-                current_beta = self._get_beta(self.total_evaluations, max_evaluations)
-                print(f"  New best: {config} -> {time_ms:.3f}ms (β={current_beta:.3f})")
-            elif time_ms == best_time:
-                # Exactly equal - update to the newer config
-                best_config = config
-                print(f"  New best: {config} -> {time_ms:.3f}ms (equal)")
+                print(f"  Gen {generation}: Best = {gen_best:.3f}ms, "
+                      f"Avg = {gen_avg:.3f}ms, Valid = {len(valid_fitnesses)}/{len(population)}, "
+                      f"Evals = {evaluations_used}")
             else:
-                self.stagnation_counter += 1
-                current_beta = self._get_beta(self.total_evaluations, max_evaluations)
-                print(f"  Config: {config} -> {time_ms:.3f}ms (β={current_beta:.3f})")
+                print(f"  Gen {generation}: No valid solutions found!")
 
-            # Update best found time for stagnation tracking
-            if time_ms < self.best_found_time:
-                self.best_found_time = time_ms
-
-            # Check for early stopping
-            if self._should_stop_early(configs_tried, max_evaluations):
+            # Check if we have budget for next generation
+            if evaluations_used + self.population_size > max_evaluations:
+                print(f"  Stopping: Next generation would exceed budget ({evaluations_used + self.population_size} > {max_evaluations})")
                 break
 
-        if best_config is None:
+            # Create next generation
+            # 1. Elitism - keep best individuals
+            elite_indices = np.argsort(fitnesses)[:self.elite_size]
+            next_population = [population[i] for i in elite_indices]
+
+            # 2. Tournament selection for breeding
+            selected_parents = self._tournament_selection(population, fitnesses)
+
+            # 3. Crossover and mutation to fill remaining slots
+            while len(next_population) < self.population_size:
+                parent1, parent2 = random.sample(selected_parents, 2)
+                child1, child2 = self._crossover(parent1, parent2)
+
+                # Mutate children
+                child1 = self._mutate(child1)
+                child2 = self._mutate(child2)
+
+                # Repair invalid children
+                child1 = self._repair_individual(child1)
+                child2 = self._repair_individual(child2)
+
+                next_population.extend([child1, child2])
+
+            # Trim to exact population size
+            population = next_population[:self.population_size]
+
+        if self.all_time_best is None:
             print("  No valid configuration found!")
             return None
 
-        # Calculate memory usage
+        # Calculate memory usage for best config
         wmma_tile = 16
-        block_m = best_config[0] * best_config[2] * wmma_tile
-        block_n = best_config[1] * best_config[3] * wmma_tile
+        block_m = self.all_time_best[0] * self.all_time_best[2] * wmma_tile
+        block_n = self.all_time_best[1] * self.all_time_best[3] * wmma_tile
         block_k = wmma_tile
         lds_size = (block_m * block_k) + (block_k * block_n)
         memory_used = 2 * lds_size * 2
 
-        efficiency = (self.total_evaluations / max_evaluations) * 100
-        print(f"  Best config: {best_config} -> {best_time:.3f}ms")
+        print(f"  Best config: {self.all_time_best} -> {self.all_time_best_fitness:.3f}ms")
         print(f"  Memory usage: {memory_used}/{self.max_shared_memory} bytes")
-        print(f"  Improvements found: {len(self.improvement_history)}")
-        print(f"  Total evaluations: {self.total_evaluations}/{max_evaluations} ({efficiency:.1f}% of budget)")
+        print(f"  Generations: {generation}")
+        print(f"  Total evaluations: {evaluations_used}")
 
         return {
             'config': {
-                'warps_m': int(best_config[0]),
-                'warps_n': int(best_config[1]),
-                'warp_tile_m': int(best_config[2]),
-                'warp_tile_n': int(best_config[3])
+                'warps_m': int(self.all_time_best[0]),
+                'warps_n': int(self.all_time_best[1]),
+                'warp_tile_m': int(self.all_time_best[2]),
+                'warp_tile_n': int(self.all_time_best[3])
             },
-            'time_ms': float(best_time),
-            'evaluations': self.total_evaluations,
-            'memory_used_bytes': memory_used
+            'time_ms': float(self.all_time_best_fitness),
+            'evaluations': evaluations_used,
+            'generations': generation,
+            'memory_used_bytes': memory_used,
+            'generation_history': self.generation_history
         }
 
-    def tune_all(self, sizes=None, ab_layouts=None, max_evaluations=40):
+    def tune_all(self, sizes=None, ab_layouts=None, max_evaluations=60):
         """Tune all size and (A,B) layout combinations."""
         if sizes is None:
             sizes = [
@@ -461,6 +407,7 @@ class UCBBayesianTuner:
                             "config": result['config'],
                             "avg_time_ms": result['time_ms'],
                             "evaluations": result['evaluations'],
+                            "generations": result['generations'],
                             "memory_used_bytes": result['memory_used_bytes']
                         }
 
@@ -523,30 +470,36 @@ def parse_baselines(baseline_strings):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='UCB-based Bayesian Optimization Tuner',
+        description='Genetic Algorithm WMMA Tuner (4-parameter version)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Use default sizes and layouts
-  python tune.py
+  python ga_wmma_tune.py
 
   # Tune specific matrix sizes
-  python tune.py --sizes 1024,1024,1024 2048,2048,2048
+  python ga_wmma_tune.py --sizes 1024,1024,1024 2048,2048,2048
 
-  # Quick run: 25 evaluations
-  python tune.py --budget 25
+  # Use specific seed for reproducible results
+  python ga_wmma_tune.py --seed 123
+
+  # Different seed for different exploration
+  python ga_wmma_tune.py --seed 456
+
+  # Adjust GA parameters for larger search
+  python ga_wmma_tune.py --budget 60 --pop-size 20
 
   # Tune specific (A,B) layouts
-  python tune.py --layouts row_major,col_major col_major,col_major
+  python ga_wmma_tune.py --layouts row_major,col_major col_major,col_major
 
   # Use shorthand for layouts
-  python tune.py --layouts r,c c,c
+  python ga_wmma_tune.py --layouts r,c c,c
 
   # Add custom baselines
-  python tune.py --baselines 4,4,4,4 2,2,4,4 8,2,2,2
+  python ga_wmma_tune.py --baselines 4,4,4,4 2,2,4,4 8,2,2,2
 
   # Custom GPU architecture
-  python tune.py --gpu-arch gfx1103
+  python ga_wmma_tune.py --gpu-arch gfx1103
         """)
 
     parser.add_argument('--sizes', nargs='*',
@@ -555,8 +508,18 @@ Examples:
                        help='Matrix (A,B) layouts as A,B (e.g., row_major,col_major or r,c)')
     parser.add_argument('--baselines', nargs='*',
                        help='Baseline configs as warps_m,warps_n,warp_tile_m,warp_tile_n (e.g., 4,4,4,4 2,2,4,4)')
-    parser.add_argument('--budget', type=int, default=40,
-                       help='Evaluation budget per (A,B) layout combination (default: 40)')
+    parser.add_argument('--budget', type=int, default=60,
+                       help='Evaluation budget per (A,B) layout combination (default: 60)')
+    parser.add_argument('--pop-size', type=int, default=15,
+                       help='Population size (default: 15)')
+    parser.add_argument('--mutation-rate', type=float, default=0.2,
+                       help='Mutation rate (default: 0.2)')
+    parser.add_argument('--crossover-rate', type=float, default=0.85,
+                       help='Crossover rate (default: 0.85)')
+    parser.add_argument('--elite-size', type=int, default=3,
+                       help='Number of elite individuals to keep (default: 3)')
+    parser.add_argument('--seed', type=int, default=42,
+                       help='Random seed for reproducible results (default: 42)')
     parser.add_argument('--gpu-arch', default='gfx1100', help='GPU architecture (default: gfx1100)')
     parser.add_argument('--max-memory', type=int, default=65336,
                        help='Maximum shared memory in bytes (default: 65336)')
@@ -596,8 +559,13 @@ Examples:
     else:
         baselines = None  # Use default baselines
 
-    print("UCB-based Bayesian Optimization Tuner")
+    print("Genetic Algorithm WMMA Tuner (4-parameter version)")
     print(f"GPU Architecture: {args.gpu_arch}")
+    print(f"Random seed: {args.seed}")
+    print(f"Population size: {args.pop_size}")
+    print(f"Mutation rate: {args.mutation_rate}")
+    print(f"Crossover rate: {args.crossover_rate}")
+    print(f"Elite size: {args.elite_size}")
     print(f"Evaluation budget per (A,B) layout: {args.budget}")
     print(f"Shared memory limit: {args.max_memory} bytes")
     print(f"Matrix sizes to test: {len(sizes)}")
@@ -613,30 +581,34 @@ Examples:
         for baseline in baselines:
             print(f"  {baseline}")
 
-    tuner = UCBBayesianTuner(
+    # Create tuner with command line parameters
+    tuner = GAWMMATuner(
         max_shared_memory=args.max_memory,
         gpu_arch=args.gpu_arch,
-        baselines=baselines
+        baselines=baselines,
+        random_seed=args.seed
     )
+
+    # Override GA parameters from command line
+    tuner.population_size = args.pop_size
+    tuner.mutation_rate = args.mutation_rate
+    tuner.crossover_rate = args.crossover_rate
+    tuner.elite_size = args.elite_size
 
     results = tuner.tune_all(sizes=sizes, ab_layouts=ab_layouts, max_evaluations=args.budget)
 
     # Generate configuration JSON
     configs = []
-    processed_configs = set()  # Track (M,N,K,A,B) combinations to avoid duplicates
+    processed_configs = set()
 
     for size_results in results.values():
         for result in size_results.values():
-            # Extract A,B layout from the result
             layout_a = result["layout"]["A"]
             layout_b = result["layout"]["B"]
-
-            # Create a key to avoid duplicates for same (M,N,K,A,B)
             config_key = (result["M"], result["N"], result["K"], layout_a, layout_b)
 
             if config_key not in processed_configs:
                 processed_configs.add(config_key)
-
                 config = {
                     "range": {"M": result["M"], "N": result["N"], "K": result["K"]},
                     "layout": {"A": layout_a, "B": layout_b},
@@ -652,10 +624,11 @@ Examples:
 
     # Print summary
     print("\n" + "="*80)
-    print("UCB BAYESIAN OPTIMIZATION RESULTS:")
+    print("GENETIC ALGORITHM WMMA RESULTS:")
     print("="*80)
 
     total_evaluations = 0
+    total_generations = 0
     count = 0
 
     for size_key, size_results in results.items():
@@ -671,14 +644,18 @@ Examples:
             config = result['config']
             print(f"  {ab_key}: {config['warps_m']},{config['warps_n']},"
                   f"{config['warp_tile_m']},{config['warp_tile_n']} -> "
-                  f"{result['avg_time_ms']:.3f}ms ({result['evaluations']} evals)")
+                  f"{result['avg_time_ms']:.3f}ms ({result['evaluations']} evals, {result['generations']} gens)")
             total_evaluations += result['evaluations']
+            total_generations += result['generations']
             count += 1
 
     if count > 0:
         avg_evals = total_evaluations / count
+        avg_gens = total_generations / count
         print(f"\nTotal evaluations: {total_evaluations}")
+        print(f"Total generations: {total_generations}")
         print(f"Average evaluations per (A,B) problem: {avg_evals:.1f}")
+        print(f"Average generations per (A,B) problem: {avg_gens:.1f}")
     print(f"Configuration saved to: {args.output}")
 
 if __name__ == "__main__":

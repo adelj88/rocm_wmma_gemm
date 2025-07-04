@@ -35,12 +35,7 @@ namespace detail
 {
 
 // Helper to unpack tuple as template parameters
-template<typename T,
-         m_layout layout_C,
-         m_layout layout_A,
-         m_layout layout_B,
-         typename Tuple,
-         size_t... I>
+template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B, class Tuple, size_t... I>
 __host__ void launch_kernel_impl(std::index_sequence<I...>,
                                  T*           C,
                                  const T*     A,
@@ -64,7 +59,7 @@ __host__ void launch_kernel_impl(std::index_sequence<I...>,
 }
 
 // Template to generate dispatch table
-template<typename T, m_layout layout_C, m_layout layout_A, m_layout layout_B, size_t... I>
+template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B, size_t... I>
 constexpr auto make_dispatch_table(std::index_sequence<I...>)
 {
     using kernel_func
@@ -95,7 +90,7 @@ constexpr auto make_dispatch_table(std::index_sequence<I...>)
 
 } // namespace detail
 
-template<typename T, m_layout layout_C, m_layout layout_A, m_layout layout_B>
+template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B>
 struct kernel_launcher
 {
     static constexpr auto dispatch_table

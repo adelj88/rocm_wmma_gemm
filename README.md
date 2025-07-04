@@ -53,16 +53,18 @@ Run the executable after building:
 ```
 
 ### Automatic Kernel Tuning
-The library includes a Bayesian Optimization-based tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
+The library includes a Genetic Algorithm-based tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
 
 #### **Tuning Approach**
-The tuner uses **Upper Confidence Bound (UCB) Bayesian Optimization** to efficiently explore the parameter space:
+The tuner uses **Genetic Algorithm (GA)** to efficiently explore the discrete parameter space:
 
-- **Smart initialization**: Tests proven baseline configurations first, then uses Latin Hypercube Sampling for better parameter space coverage
-- **UCB acquisition function**: Balances exploration of uncertain regions with exploitation of promising configurations
-- **Gaussian Process modeling**: Learns from previous evaluations to predict performance of untried configurations
-- **Adaptive β scheduling**: Adjusts exploration vs exploitation based on budget size and improvement history
-
+- **Population-based search**: Explores multiple configurations simultaneously through evolutionary generations
+- **Smart initialization**: Seeds initial population with proven baseline configurations plus diverse random individuals
+- **Tournament selection**: Selects high-performing configurations as parents for the next generation
+- **Uniform crossover**: Combines successful parameter combinations from different parent configurations
+- **Constraint-aware mutation**: Randomly explores new parameter values while respecting hardware constraints
+- **Elitism**: Preserves the best configurations across generations to prevent loss of good solutions
+- **Reproducible results**: Uses configurable random seeds for consistent and repeatable tuning runs
 
 To run the tuner:
 ```bash
@@ -73,18 +75,23 @@ python3 tune.py # Results written to gemm_config_tuned.json
 # Test specific sizes
 python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
 
-# Quick run: 25 evaluations
-python tune.py --budget 25
+# Adjust evaluation budget
+python3 tune.py --budget 80
 
 # Test specific layouts
 python3 tune.py --layouts r,c c,c
 
+# Reproducible results with specific seed
+python3 tune.py --seed 123
+
+# Adjust GA parameters for different exploration
+python3 tune.py --pop-size 30 --mutation-rate 0.4
+
 # Different GPU architecture
 python3 tune.py --gpu-arch gfx1103
 
-# With output
-python3 tune.py --output output.json
-```
+# Custom output file
+python3 tune.py --output my_config.json
 
 ## Performance Results
 - [View detailed square matrix benchmarks](docs/square.md)

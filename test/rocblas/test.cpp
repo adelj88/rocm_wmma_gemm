@@ -54,7 +54,7 @@ using OrderRowColCol = LayoutWrapper<m_layout::row_major, m_layout::col_major, m
 using OrderColRowCol = LayoutWrapper<m_layout::col_major, m_layout::row_major, m_layout::col_major>;
 using OrderRowRowCol = LayoutWrapper<m_layout::row_major, m_layout::row_major, m_layout::col_major>;
 
-template<typename LayoutT>
+template<class LayoutT>
 class rocBLASTest : public ::testing::Test
 {
 protected:
@@ -125,7 +125,7 @@ private:
         verify_results(h_C, h_C_ref);
     }
 
-    template<typename MatrixA, typename MatrixB, typename MatrixC>
+    template<class MatrixA, class MatrixB, class MatrixC>
     void RunGEMMImpl(MatrixA& h_A, MatrixB& h_B, MatrixC& h_C, size_t M, size_t N, size_t K)
     {
         half *d_A, *d_B, *d_C;
@@ -144,7 +144,7 @@ private:
         CopyResultAndCleanup(h_C, d_A, d_B, d_C, M * N);
     }
 
-    template<typename MatrixA, typename MatrixB, typename MatrixC>
+    template<class MatrixA, class MatrixB, class MatrixC>
     void AllocateDeviceMemory(
         MatrixA& h_A, MatrixB& h_B, MatrixC& h_C, half*& d_A, half*& d_B, half*& d_C)
     {
@@ -153,7 +153,7 @@ private:
         HIP_CHECK(hipMalloc(&d_C, h_C.size() * sizeof(half)));
     }
 
-    template<typename MatrixA, typename MatrixB>
+    template<class MatrixA, class MatrixB>
     void CopyInputsToDevice(MatrixA& h_A, MatrixB& h_B, half* d_A, half* d_B)
     {
         HIP_CHECK(hipMemcpy(d_A, h_A.data(), h_A.size() * sizeof(half), hipMemcpyHostToDevice));
@@ -161,7 +161,7 @@ private:
         HIP_CHECK(hipDeviceSynchronize());
     }
 
-    template<typename MatrixC>
+    template<class MatrixC>
     void CopyResultAndCleanup(MatrixC& h_C, half* d_A, half* d_B, half* d_C, size_t result_elements)
     {
         HIP_CHECK(hipPeekAtLastError());

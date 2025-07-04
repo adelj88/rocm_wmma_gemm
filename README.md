@@ -19,8 +19,6 @@ This repository aims to:
 - Python3 (required for config generation and tuning)
   - Python packages (can be installed with pip or conda)
     - ``numpy``
-    - ``scikit-learn``
-    - ``scipy``
 - AMD RDNA3/RDNA3.5/RDNA4 GPU (required for WMMA support)
 
 ### Build Steps

@@ -3,27 +3,28 @@
 import subprocess
 import json
 import numpy as np
-import random
+import optuna
+import warnings
 import re
 import argparse
 import sys
-import warnings
+import random
 
 warnings.filterwarnings('ignore')
 
-class GAWMMATuner:
-    """Genetic Algorithm-based WMMA kernel tuner for 4-parameter discrete space."""
+class OptunaWMMATuner:
+    """Optuna-based TPE tuner for WMMA kernel optimization."""
 
     def __init__(self, max_shared_memory=65336, gpu_arch="gfx1100", baselines=None, random_seed=42):
         self.max_shared_memory = max_shared_memory
         self.gpu_arch = gpu_arch
+        self.random_seed = random_seed
 
         # Set random seed for reproducible results
         random.seed(random_seed)
         np.random.seed(random_seed)
-        self.random_seed = random_seed
 
-        # Define baseline configurations to seed initial population
+        # Enhanced baseline configurations for WMMA
         if baselines is None:
             self.baselines = [
                 (4, 4, 4, 4),  # Original baseline
@@ -34,42 +35,38 @@ class GAWMMATuner:
                 (2, 4, 4, 2),  # Asymmetric warps (flipped)
                 (4, 4, 4, 2),  # Original warps, smaller tiles
                 (4, 4, 2, 2),  # Original warps, smaller tiles
+                (2, 8, 4, 4),  # Larger tile
             ]
         else:
             self.baselines = baselines
 
-        # Parameter space - 4 parameters only
-        self.valid_values = {
+        # Parameter space definitions - 4 parameters only
+        self.param_space = {
             'warps_m': [1, 2, 4, 8],
             'warps_n': [1, 2, 4, 8],
             'warp_tile_m': [1, 2, 4, 8],
             'warp_tile_n': [1, 2, 4, 8]
         }
 
-        # Generate all valid configurations
+        # Generate all valid configurations for sampling
         self.valid_configs = self._generate_valid_configs()
         print(f"Generated {len(self.valid_configs)} valid configurations")
 
-        # GA Parameters - optimized for ~200 configuration space
-        self.population_size = 15
-        self.elite_size = 3         # Keep best 3 each generation (20%)
-        self.mutation_rate = 0.2    # 20% mutation rate for smaller space
-        self.crossover_rate = 0.85  # 85% crossover rate
-
         # State tracking
-        self.evaluated_configs = {}  # Cache results to avoid re-evaluation
-        self.generation_history = []
-        self.all_time_best = None
-        self.all_time_best_fitness = float('inf')
+        self.current_problem = None
+        self.total_evaluations = 0
+        self.best_config = None
+        self.best_time = float('inf')
+        self.improvement_history = []
 
     def _generate_valid_configs(self):
         """Generate all valid discrete configurations."""
         configs = []
         count = 0
-        for warps_m in self.valid_values['warps_m']:
-            for warps_n in self.valid_values['warps_n']:
-                for warp_tile_m in self.valid_values['warp_tile_m']:
-                    for warp_tile_n in self.valid_values['warp_tile_n']:
+        for warps_m in self.param_space['warps_m']:
+            for warps_n in self.param_space['warps_n']:
+                for warp_tile_m in self.param_space['warp_tile_m']:
+                    for warp_tile_n in self.param_space['warp_tile_n']:
                         count += 1
                         config = (warps_m, warps_n, warp_tile_m, warp_tile_n)
                         if self._check_constraints(config):
@@ -79,7 +76,7 @@ class GAWMMATuner:
         return configs
 
     def _check_constraints(self, config):
-        """Check memory and resource constraints."""
+        """Check memory and resource constraints for WMMA."""
         warps_m, warps_n, warp_tile_m, warp_tile_n = config
 
         if warps_m == 0 or warps_n == 0 or warp_tile_m == 0 or warp_tile_n == 0:
@@ -96,115 +93,25 @@ class GAWMMATuner:
         if memory_bytes > self.max_shared_memory:
             return False
 
-        # Resource constraint - RDNA GPUs: max 1024 threads per block, warp size = 32
+        # Resource constraint - RDNA GPUs: max 32 warps per block
         total_warps = warps_m * warps_n
-        if total_warps > 32:  # 1024 threads ÷ 32 threads per warp = 32 warps max
+        if total_warps > 32:
             return False
 
         return True
 
-    def _generate_random_individual(self):
-        """Generate a random valid individual."""
-        max_attempts = 100
-        for _ in range(max_attempts):
-            individual = tuple(
-                random.choice(self.valid_values[param])
-                for param in ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n']
-            )
-            if self._check_constraints(individual):
-                return individual
-
-        # Fallback to first baseline if random generation fails
-        return self.baselines[0]
-
-    def _initialize_population(self):
-        """Initialize population with baselines + random individuals."""
-        population = []
-
-        # Add baselines first (ensure they're valid)
-        for baseline in self.baselines:
-            if self._check_constraints(baseline):
-                population.append(baseline)
-
-        # Fill remaining slots with random individuals
-        while len(population) < self.population_size:
-            individual = self._generate_random_individual()
-            # Avoid duplicates
-            if individual not in population:
-                population.append(individual)
-
-        return population
-
-    def _crossover(self, parent1, parent2):
-        """Uniform crossover - randomly pick each gene from either parent."""
-        if random.random() > self.crossover_rate:
-            return parent1, parent2
-
-        child1, child2 = [], []
-        for i in range(len(parent1)):
-            if random.random() < 0.5:
-                child1.append(parent1[i])
-                child2.append(parent2[i])
-            else:
-                child1.append(parent2[i])
-                child2.append(parent1[i])
-
-        return tuple(child1), tuple(child2)
-
-    def _mutate(self, individual):
-        """Mutate individual by randomly changing some parameters."""
-        if random.random() > self.mutation_rate:
-            return individual
-
-        individual_list = list(individual)
-        param_names = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n']
-
-        # Mutate 1 parameter (smaller space, less aggressive mutation)
-        num_mutations = 1
-        for _ in range(num_mutations):
-            param_idx = random.randint(0, len(param_names) - 1)
-            param_name = param_names[param_idx]
-            individual_list[param_idx] = random.choice(self.valid_values[param_name])
-
-        return tuple(individual_list)
-
-    def _repair_individual(self, individual):
-        """Repair invalid individual by adjusting parameters."""
-        if self._check_constraints(individual):
-            return individual
-
-        # Try several repair attempts
-        for _ in range(20):
-            # Try mutating to fix constraints
-            repaired = self._mutate(individual)
-            if self._check_constraints(repaired):
-                return repaired
-
-        # If repair fails, generate a new random individual
-        return self._generate_random_individual()
-
-    def _tournament_selection(self, population, fitnesses, tournament_size=3):
-        """Tournament selection for parent selection."""
-        selected = []
-        for _ in range(len(population)):
-            # Select tournament_size random individuals
-            tournament_indices = random.sample(range(len(population)),
-                                             min(tournament_size, len(population)))
-            tournament_fitnesses = [fitnesses[i] for i in tournament_indices]
-
-            # Find winner (lowest fitness for minimization)
-            winner_idx = tournament_indices[np.argmin(tournament_fitnesses)]
-            selected.append(population[winner_idx])
-
-        return selected
+    def _parse_benchmark_output(self, output):
+        """Parse benchmark output to extract timing."""
+        lines = output.strip().split('\n')
+        for line in lines:
+            if 'dynamic_kernel/manual_time' in line:
+                match = re.search(r'(\d+\.?\d*)\s*ms', line)
+                if match:
+                    return float(match.group(1))
+        return None
 
     def _evaluate_config(self, M, N, K, layout_a, layout_b, layout_c, config):
         """Evaluate a configuration and return timing."""
-        # Check cache first
-        cache_key = (M, N, K, layout_a, layout_b, layout_c, config)
-        if cache_key in self.evaluated_configs:
-            return self.evaluated_configs[cache_key]
-
         warps_m, warps_n, warp_tile_m, warp_tile_n = config
 
         try:
@@ -218,157 +125,138 @@ class GAWMMATuner:
             ], capture_output=True, text=True, timeout=60, check=False)
 
             if result.returncode != 0:
-                time_ms = float('inf')
-            else:
-                time_ms = self._parse_benchmark_output(result.stdout)
-                if time_ms is None:
-                    time_ms = float('inf')
+                return float('inf')
 
-            # Cache result
-            self.evaluated_configs[cache_key] = time_ms
+            time_ms = self._parse_benchmark_output(result.stdout)
+            if time_ms is None:
+                return float('inf')
+
             return time_ms
 
         except Exception:
-            self.evaluated_configs[cache_key] = float('inf')
             return float('inf')
 
-    def _parse_benchmark_output(self, output):
-        """Parse benchmark output to extract timing."""
-        lines = output.strip().split('\n')
-        for line in lines:
-            if 'dynamic_kernel/manual_time' in line:
-                match = re.search(r'(\d+\.?\d*)\s*ms', line)
-                if match:
-                    return float(match.group(1))
-        return None
+    def _objective_function(self, trial):
+        """Optuna objective function - samples from pre-filtered valid configurations."""
+        # Sample directly from valid configurations
+        config_idx = trial.suggest_int('config_idx', 0, len(self.valid_configs) - 1)
+        config = self.valid_configs[config_idx]
 
-    def _evaluate_population(self, population, M, N, K, layout_a, layout_b):
-        """Evaluate entire population and return fitness values."""
-        fitnesses = []
-        for individual in population:
-            fitness = self._evaluate_config(M, N, K, layout_a, layout_b, 0, individual)
-            fitnesses.append(fitness)
+        # All configs are guaranteed valid - no constraint checking needed
+        M, N, K, layout_a, layout_b = self.current_problem
+        time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, 0, config)
 
-            # Track all-time best
-            if fitness < self.all_time_best_fitness:
-                self.all_time_best_fitness = fitness
-                self.all_time_best = individual
-            elif fitness == self.all_time_best_fitness and self.all_time_best_fitness != float('inf'):
-                # Equal performance - update to newer config
-                self.all_time_best = individual
+        self.total_evaluations += 1
 
-        return fitnesses
+        # Track improvements
+        if time_ms < self.best_time:
+            self.best_time = time_ms
+            self.best_config = config
+            self.improvement_history.append(self.total_evaluations)
+            print(f"  New best: {config} -> {time_ms:.3f}ms (trial {self.total_evaluations})")
+        elif time_ms == self.best_time and self.best_time != float('inf'):
+            # Equal performance - update to newer config
+            self.best_config = config
+            print(f"  New best: {config} -> {time_ms:.3f}ms (equal, trial {self.total_evaluations})")
+        else:
+            print(f"  Trial {self.total_evaluations}: {config} -> {time_ms:.3f}ms")
 
-    def tune_ab_layout(self, M, N, K, layout_a, layout_b, max_evaluations=60):
-        """Tune for (A,B) layout pair using Genetic Algorithm."""
+        return time_ms
+
+    def _objective_function_for_baseline(self, config):
+        """Evaluate baseline configuration."""
+        M, N, K, layout_a, layout_b = self.current_problem
+        time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, 0, config)
+
+        self.total_evaluations += 1
+
+        if time_ms < self.best_time:
+            self.best_time = time_ms
+            self.best_config = config
+            self.improvement_history.append(self.total_evaluations)
+            print(f"  Baseline result: {config} -> {time_ms:.3f}ms")
+        elif time_ms == self.best_time and self.best_time != float('inf'):
+            # Equal performance - update to newer config
+            self.best_config = config
+            print(f"  Baseline result: {config} -> {time_ms:.3f}ms (equal)")
+        else:
+            print(f"  Baseline result: {config} -> {time_ms:.3f}ms")
+
+        return time_ms
+
+    def tune_ab_layout(self, M, N, K, layout_a, layout_b, max_evaluations=50):
+        """Tune for (A,B) layout pair using Optuna TPE."""
         print(f"\nTuning {M}×{N}×{K} with layout A={layout_a}, B={layout_b}")
-        print(f"GA Parameters: pop_size={self.population_size}, elite={self.elite_size}, "
-              f"mutation_rate={self.mutation_rate}, crossover_rate={self.crossover_rate}")
+        print("Using Optuna TPE (Tree-structured Parzen Estimators)")
 
         # Reset state for this problem
-        self.evaluated_configs = {}
-        self.generation_history = []
-        self.all_time_best = None
-        self.all_time_best_fitness = float('inf')
+        self.current_problem = (M, N, K, layout_a, layout_b)
+        self.total_evaluations = 0
+        self.best_config = None
+        self.best_time = float('inf')
+        self.improvement_history = []
 
-        # Initialize population
-        population = self._initialize_population()
-        evaluations_used = 0
-        generation = 0
+        # Create Optuna study - adjusted parameters for smaller space
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=optuna.samplers.TPESampler(
+                seed=self.random_seed,
+                n_startup_trials=min(8, max_evaluations // 4),  # Fewer startup trials for smaller space
+                n_ei_candidates=16,  # Smaller candidate set
+                multivariate=True
+            )
+        )
 
-        print("Starting Genetic Algorithm...")
+        print("Starting Optuna optimization...")
 
-        while evaluations_used < max_evaluations:
-            generation += 1
+        # Add baseline configurations first
+        baseline_budget = min(len(self.baselines), max_evaluations // 3)
+        for i, baseline in enumerate(self.baselines[:baseline_budget]):
+            if baseline in self.valid_configs:
+                # Find index of baseline in valid configs
+                baseline_idx = self.valid_configs.index(baseline)
 
-            # Evaluate population
-            fitnesses = self._evaluate_population(population, M, N, K, layout_a, layout_b)
-            evaluations_used += len(population)
+                # Enqueue trial with the config index (Optuna will evaluate it)
+                study.enqueue_trial({'config_idx': baseline_idx})
 
-            # Track generation stats
-            valid_fitnesses = [f for f in fitnesses if f != float('inf')]
-            if valid_fitnesses:
-                gen_best = min(fitnesses)
-                gen_avg = np.mean(valid_fitnesses)
-                gen_best_idx = np.argmin(fitnesses)
-                gen_best_individual = population[gen_best_idx]
+        # Run remaining optimization trials
+        remaining_trials = max_evaluations - self.total_evaluations
+        if remaining_trials > 0:
+            study.optimize(self._objective_function, n_trials=remaining_trials, show_progress_bar=False)
 
-                self.generation_history.append({
-                    'generation': generation,
-                    'best_fitness': gen_best,
-                    'avg_fitness': gen_avg,
-                    'best_individual': gen_best_individual
-                })
-
-                print(f"  Gen {generation}: Best = {gen_best:.3f}ms, "
-                      f"Avg = {gen_avg:.3f}ms, Valid = {len(valid_fitnesses)}/{len(population)}, "
-                      f"Evals = {evaluations_used}")
-            else:
-                print(f"  Gen {generation}: No valid solutions found!")
-
-            # Check if we have budget for next generation
-            if evaluations_used + self.population_size > max_evaluations:
-                print(f"  Stopping: Next generation would exceed budget ({evaluations_used + self.population_size} > {max_evaluations})")
-                break
-
-            # Create next generation
-            # 1. Elitism - keep best individuals
-            elite_indices = np.argsort(fitnesses)[:self.elite_size]
-            next_population = [population[i] for i in elite_indices]
-
-            # 2. Tournament selection for breeding
-            selected_parents = self._tournament_selection(population, fitnesses)
-
-            # 3. Crossover and mutation to fill remaining slots
-            while len(next_population) < self.population_size:
-                parent1, parent2 = random.sample(selected_parents, 2)
-                child1, child2 = self._crossover(parent1, parent2)
-
-                # Mutate children
-                child1 = self._mutate(child1)
-                child2 = self._mutate(child2)
-
-                # Repair invalid children
-                child1 = self._repair_individual(child1)
-                child2 = self._repair_individual(child2)
-
-                next_population.extend([child1, child2])
-
-            # Trim to exact population size
-            population = next_population[:self.population_size]
-
-        if self.all_time_best is None:
+        if self.best_config is None:
             print("  No valid configuration found!")
             return None
 
-        # Calculate memory usage for best config
+        # Calculate memory usage
         wmma_tile = 16
-        block_m = self.all_time_best[0] * self.all_time_best[2] * wmma_tile
-        block_n = self.all_time_best[1] * self.all_time_best[3] * wmma_tile
+        block_m = self.best_config[0] * self.best_config[2] * wmma_tile
+        block_n = self.best_config[1] * self.best_config[3] * wmma_tile
         block_k = wmma_tile
         lds_size = (block_m * block_k) + (block_k * block_n)
         memory_used = 2 * lds_size * 2
 
-        print(f"  Best config: {self.all_time_best} -> {self.all_time_best_fitness:.3f}ms")
+        coverage = (self.total_evaluations / len(self.valid_configs)) * 100
+        print(f"  Best config: {self.best_config} -> {self.best_time:.3f}ms")
         print(f"  Memory usage: {memory_used}/{self.max_shared_memory} bytes")
-        print(f"  Generations: {generation}")
-        print(f"  Total evaluations: {evaluations_used}")
+        print(f"  Improvements found: {len(self.improvement_history)}")
+        print(f"  Total evaluations: {self.total_evaluations}/{max_evaluations}")
+        print(f"  Space coverage: {coverage:.1f}%")
 
         return {
             'config': {
-                'warps_m': int(self.all_time_best[0]),
-                'warps_n': int(self.all_time_best[1]),
-                'warp_tile_m': int(self.all_time_best[2]),
-                'warp_tile_n': int(self.all_time_best[3])
+                'warps_m': int(self.best_config[0]),
+                'warps_n': int(self.best_config[1]),
+                'warp_tile_m': int(self.best_config[2]),
+                'warp_tile_n': int(self.best_config[3])
             },
-            'time_ms': float(self.all_time_best_fitness),
-            'evaluations': evaluations_used,
-            'generations': generation,
+            'time_ms': float(self.best_time),
+            'evaluations': self.total_evaluations,
             'memory_used_bytes': memory_used,
-            'generation_history': self.generation_history
+            'space_coverage_percent': coverage
         }
 
-    def tune_all(self, sizes=None, ab_layouts=None, max_evaluations=60):
+    def tune_all(self, sizes=None, ab_layouts=None, max_evaluations=50):
         """Tune all size and (A,B) layout combinations."""
         if sizes is None:
             sizes = [
@@ -407,8 +295,8 @@ class GAWMMATuner:
                             "config": result['config'],
                             "avg_time_ms": result['time_ms'],
                             "evaluations": result['evaluations'],
-                            "generations": result['generations'],
-                            "memory_used_bytes": result['memory_used_bytes']
+                            "memory_used_bytes": result['memory_used_bytes'],
+                            "space_coverage_percent": result['space_coverage_percent']
                         }
 
         return results
@@ -470,36 +358,27 @@ def parse_baselines(baseline_strings):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Genetic Algorithm WMMA Tuner (4-parameter version)',
+        description='Optuna TPE WMMA Tuner',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use default sizes and layouts
-  python ga_wmma_tune.py
+  # Default run with Optuna TPE
+  python tune.py
 
-  # Tune specific matrix sizes
-  python ga_wmma_tune.py --sizes 1024,1024,1024 2048,2048,2048
+  # Specific seed for reproducibility
+  python tune.py --seed 123
 
-  # Use specific seed for reproducible results
-  python ga_wmma_tune.py --seed 123
+  # Larger budget for thorough search
+  python tune.py --budget 60
 
-  # Different seed for different exploration
-  python ga_wmma_tune.py --seed 456
+  # Test specific sizes
+  python tune.py --sizes 1024,1024,1024 2048,2048,2048
 
-  # Adjust GA parameters for larger search
-  python ga_wmma_tune.py --budget 60 --pop-size 20
+  # Custom baselines
+  python tune.py --baselines 4,4,4,4 2,2,4,4 8,2,2,2
 
-  # Tune specific (A,B) layouts
-  python ga_wmma_tune.py --layouts row_major,col_major col_major,col_major
-
-  # Use shorthand for layouts
-  python ga_wmma_tune.py --layouts r,c c,c
-
-  # Add custom baselines
-  python ga_wmma_tune.py --baselines 4,4,4,4 2,2,4,4 8,2,2,2
-
-  # Custom GPU architecture
-  python ga_wmma_tune.py --gpu-arch gfx1103
+  # Different GPU architecture
+  python tune.py --gpu-arch gfx1103
         """)
 
     parser.add_argument('--sizes', nargs='*',
@@ -508,27 +387,19 @@ Examples:
                        help='Matrix (A,B) layouts as A,B (e.g., row_major,col_major or r,c)')
     parser.add_argument('--baselines', nargs='*',
                        help='Baseline configs as warps_m,warps_n,warp_tile_m,warp_tile_n (e.g., 4,4,4,4 2,2,4,4)')
-    parser.add_argument('--budget', type=int, default=60,
-                       help='Evaluation budget per (A,B) layout combination (default: 60)')
-    parser.add_argument('--pop-size', type=int, default=15,
-                       help='Population size (default: 15)')
-    parser.add_argument('--mutation-rate', type=float, default=0.2,
-                       help='Mutation rate (default: 0.2)')
-    parser.add_argument('--crossover-rate', type=float, default=0.85,
-                       help='Crossover rate (default: 0.85)')
-    parser.add_argument('--elite-size', type=int, default=3,
-                       help='Number of elite individuals to keep (default: 3)')
+    parser.add_argument('--budget', type=int, default=50,
+                       help='Evaluation budget per (A,B) layout combination (default: 50)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducible results (default: 42)')
     parser.add_argument('--gpu-arch', default='gfx1100', help='GPU architecture (default: gfx1100)')
     parser.add_argument('--max-memory', type=int, default=65336,
                        help='Maximum shared memory in bytes (default: 65336)')
-    parser.add_argument('--output', default='gemm_config_tuned.json',
-                       help='Output JSON file (default: gemm_config_tuned.json)')
+    parser.add_argument('--output', default='wmma_config_tuned.json',
+                       help='Output JSON file (default: wmma_config_tuned.json)')
 
     args = parser.parse_args()
 
-    # Parse sizes and layouts
+    # Parse inputs
     if args.sizes:
         sizes = parse_matrix_sizes(args.sizes)
     else:
@@ -557,15 +428,11 @@ Examples:
     if args.baselines:
         baselines = parse_baselines(args.baselines)
     else:
-        baselines = None  # Use default baselines
+        baselines = None
 
-    print("Genetic Algorithm WMMA Tuner (4-parameter version)")
-    print(f"GPU Architecture: {args.gpu_arch}")
+    print("Optuna TPE WMMA Tuner (4-parameter version)")
     print(f"Random seed: {args.seed}")
-    print(f"Population size: {args.pop_size}")
-    print(f"Mutation rate: {args.mutation_rate}")
-    print(f"Crossover rate: {args.crossover_rate}")
-    print(f"Elite size: {args.elite_size}")
+    print(f"GPU Architecture: {args.gpu_arch}")
     print(f"Evaluation budget per (A,B) layout: {args.budget}")
     print(f"Shared memory limit: {args.max_memory} bytes")
     print(f"Matrix sizes to test: {len(sizes)}")
@@ -581,19 +448,12 @@ Examples:
         for baseline in baselines:
             print(f"  {baseline}")
 
-    # Create tuner with command line parameters
-    tuner = GAWMMATuner(
+    tuner = OptunaWMMATuner(
         max_shared_memory=args.max_memory,
         gpu_arch=args.gpu_arch,
         baselines=baselines,
         random_seed=args.seed
     )
-
-    # Override GA parameters from command line
-    tuner.population_size = args.pop_size
-    tuner.mutation_rate = args.mutation_rate
-    tuner.crossover_rate = args.crossover_rate
-    tuner.elite_size = args.elite_size
 
     results = tuner.tune_all(sizes=sizes, ab_layouts=ab_layouts, max_evaluations=args.budget)
 
@@ -624,11 +484,11 @@ Examples:
 
     # Print summary
     print("\n" + "="*80)
-    print("GENETIC ALGORITHM WMMA RESULTS:")
+    print("OPTUNA TPE OPTIMIZATION WMMA RESULTS:")
     print("="*80)
 
     total_evaluations = 0
-    total_generations = 0
+    total_coverage = 0
     count = 0
 
     for size_key, size_results in results.items():
@@ -642,20 +502,20 @@ Examples:
 
         for ab_key, result in ab_results.items():
             config = result['config']
+            coverage = result.get('space_coverage_percent', 0)
             print(f"  {ab_key}: {config['warps_m']},{config['warps_n']},"
                   f"{config['warp_tile_m']},{config['warp_tile_n']} -> "
-                  f"{result['avg_time_ms']:.3f}ms ({result['evaluations']} evals, {result['generations']} gens)")
+                  f"{result['avg_time_ms']:.3f}ms ({result['evaluations']} evals, {coverage:.1f}% coverage)")
             total_evaluations += result['evaluations']
-            total_generations += result['generations']
+            total_coverage += coverage
             count += 1
 
     if count > 0:
         avg_evals = total_evaluations / count
-        avg_gens = total_generations / count
+        avg_coverage = total_coverage / count
         print(f"\nTotal evaluations: {total_evaluations}")
-        print(f"Total generations: {total_generations}")
         print(f"Average evaluations per (A,B) problem: {avg_evals:.1f}")
-        print(f"Average generations per (A,B) problem: {avg_gens:.1f}")
+        print(f"Average space coverage: {avg_coverage:.1f}%")
     print(f"Configuration saved to: {args.output}")
 
 if __name__ == "__main__":

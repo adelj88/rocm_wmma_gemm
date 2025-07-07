@@ -32,7 +32,15 @@ template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type          = float __attribute__((ext_vector_type(8)));
+    constexpr int max_load_width    = 8;
+    constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
+    constexpr int min_block_bytes   = min_block_dim * sizeof(T);
+    constexpr int actual_load_width = (min_block_bytes >= 32)   ? 8
+                                      : (min_block_bytes >= 16) ? 4
+                                      : (min_block_bytes >= 8)  ? 2
+                                                                : 1;
+
+    using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -57,7 +65,15 @@ template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
-    using vector_type          = float __attribute__((ext_vector_type(8)));
+    constexpr int max_load_width    = 8;
+    constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
+    constexpr int min_block_bytes   = min_block_dim * sizeof(T);
+    constexpr int actual_load_width = (min_block_bytes >= 32)   ? 8
+                                      : (min_block_bytes >= 16) ? 4
+                                      : (min_block_bytes >= 8)  ? 2
+                                                                : 1;
+
+    using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;

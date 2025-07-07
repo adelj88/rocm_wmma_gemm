@@ -19,6 +19,7 @@ This repository aims to:
 - Python3 (required for config generation and tuning)
   - Python packages (can be installed with pip or conda)
     - ``numpy``
+    - ``optuna``
 - AMD RDNA3/RDNA3.5/RDNA4 GPU (required for WMMA support)
 
 ### Build Steps
@@ -51,22 +52,25 @@ Run the executable after building:
 ```
 
 ### Automatic Kernel Tuning
-The library includes a Genetic Algorithm-based tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
+The library includes an Optuna-based Tree-structured Parzen Estimator (TPE) tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
 
 #### **Tuning Approach**
-The tuner uses **Genetic Algorithm (GA)** to efficiently explore the discrete parameter space:
+The tuner uses **Optuna TPE (Tree-structured Parzen Estimators)** to efficiently explore the discrete parameter space:
 
-- **Population-based search**: Explores multiple configurations simultaneously through evolutionary generations
-- **Smart initialization**: Seeds initial population with proven baseline configurations plus diverse random individuals
-- **Tournament selection**: Selects high-performing configurations as parents for the next generation
-- **Uniform crossover**: Combines successful parameter combinations from different parent configurations
-- **Constraint-aware mutation**: Randomly explores new parameter values while respecting hardware constraints
-- **Elitism**: Preserves the best configurations across generations to prevent loss of good solutions
+- **Pre-filtered valid configurations**: Only evaluates hardware-valid parameter combinations, eliminating wasted trials
+- **TPE optimization**: Models the performance landscape using probabilistic distributions to intelligently sample promising regions
+- **Smart initialization**: Tests proven baseline configurations first to seed the optimization with known good solutions
+- **Multivariate learning**: Understands relationships between parameters (e.g., block sizes and tile configurations)
+- **Adaptive sampling**: Balances exploration of uncertain regions with exploitation of high-performing areas
+- **Constraint-aware preprocessing**: Hardware memory and resource limits are enforced upfront, not learned through trial and error
 - **Reproducible results**: Uses configurable random seeds for consistent and repeatable tuning runs
 
 To run the tuner:
 ```bash
 cd build
+# Install Optuna (required dependency)
+pip install optuna
+
 # Default behavior (all sizes and layouts)
 python3 tune.py # Results written to gemm_config_tuned.json
 
@@ -74,7 +78,7 @@ python3 tune.py # Results written to gemm_config_tuned.json
 python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
 
 # Adjust evaluation budget
-python3 tune.py --budget 80
+python3 tune.py --budget 100
 
 # Test specific layouts
 python3 tune.py --layouts r,c c,c
@@ -82,14 +86,14 @@ python3 tune.py --layouts r,c c,c
 # Reproducible results with specific seed
 python3 tune.py --seed 123
 
-# Adjust GA parameters for different exploration
-python3 tune.py --pop-size 30 --mutation-rate 0.4
-
 # Different GPU architecture
 python3 tune.py --gpu-arch gfx1103
 
 # Custom output file
 python3 tune.py --output my_config.json
+
+# Custom baseline configurations
+python3 tune.py --baselines 128,128,128,8,4,4,2,4,8 256,128,128,8,2,2,4,4,4
 ```
 
 ## Performance Results

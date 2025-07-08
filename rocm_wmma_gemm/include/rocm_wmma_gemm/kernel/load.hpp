@@ -35,7 +35,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     constexpr int max_load_width    = 8;
     constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes   = min_block_dim * sizeof(T);
-    constexpr int actual_load_width = (min_block_bytes >= 32)   ? 8
+    constexpr int actual_load_width = (min_block_bytes >= 32)   ? max_load_width
                                       : (min_block_bytes >= 16) ? 4
                                       : (min_block_bytes >= 8)  ? 2
                                                                 : 1;
@@ -68,7 +68,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     constexpr int max_load_width    = 8;
     constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes   = min_block_dim * sizeof(T);
-    constexpr int actual_load_width = (min_block_bytes >= 32)   ? 8
+    constexpr int actual_load_width = (min_block_bytes >= 32)   ? max_load_width
                                       : (min_block_bytes >= 16) ? 4
                                       : (min_block_bytes >= 8)  ? 2
                                                                 : 1;

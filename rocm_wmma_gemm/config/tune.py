@@ -394,8 +394,8 @@ Examples:
     parser.add_argument('--gpu-arch', default='gfx1100', help='GPU architecture (default: gfx1100)')
     parser.add_argument('--max-memory', type=int, default=65336,
                        help='Maximum shared memory in bytes (default: 65336)')
-    parser.add_argument('--output', default='wmma_config_tuned.json',
-                       help='Output JSON file (default: wmma_config_tuned.json)')
+    parser.add_argument('--output', default='gemm_config_tuned.json',
+                       help='Output JSON file (default: gemm_config_tuned.json)')
 
     args = parser.parse_args()
 

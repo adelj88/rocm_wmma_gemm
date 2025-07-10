@@ -57,19 +57,15 @@ The library includes an Optuna-based Tree-structured Parzen Estimator (TPE) tune
 #### **Tuning Approach**
 The tuner uses **Optuna TPE (Tree-structured Parzen Estimators)** to efficiently explore the discrete parameter space:
 
-- **Pre-filtered valid configurations**: Only evaluates hardware-valid parameter combinations, eliminating wasted trials
 - **TPE optimization**: Models the performance landscape using probabilistic distributions to intelligently sample promising regions
 - **Smart initialization**: Tests proven baseline configurations first to seed the optimization with known good solutions
 - **Multivariate learning**: Understands relationships between parameters (e.g., block sizes and tile configurations)
 - **Adaptive sampling**: Balances exploration of uncertain regions with exploitation of high-performing areas
-- **Constraint-aware preprocessing**: Hardware memory and resource limits are enforced upfront, not learned through trial and error
 - **Reproducible results**: Uses configurable random seeds for consistent and repeatable tuning runs
 
 To run the tuner:
 ```bash
 cd build
-# Install Optuna (required dependency)
-pip install optuna
 
 # Default behavior (all sizes and layouts)
 python3 tune.py # Results written to gemm_config_tuned.json
@@ -97,6 +93,8 @@ python3 tune.py --baselines 128,128,128,8,4,4,2,4,8 256,128,128,8,2,2,4,4,4
 ```
 
 ## Performance Results
+Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `rocblas` for all layouts and different sizes.
+
 - [View detailed square matrix benchmarks](docs/square.md)
 - [View detailed rectangular matrix benchmarks](docs/rectangle.md)
 
@@ -105,7 +103,6 @@ python3 tune.py --baselines 128,128,128,8,4,4,2,4,8 256,128,128,8,2,2,4,4,4
 2. Add BF16 implementation
 3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
 4. Tuning for RDNA3.5 and RDNA4
-5. (Maybe) Simplify interface by using leading dimensions, similar to BLAS libraries
 
 ## License
 

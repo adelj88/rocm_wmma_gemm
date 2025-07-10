@@ -48,7 +48,7 @@ class OptunaWMMATuner:
             'warp_tile_n': [1, 2, 4, 8]
         }
 
-        # Generate all valid configurations for sampling
+        # Generate all valid configurations for reference
         self.valid_configs = self._generate_valid_configs()
         print(f"Generated {len(self.valid_configs)} valid configurations")
 
@@ -136,13 +136,22 @@ class OptunaWMMATuner:
         except Exception:
             return float('inf')
 
-    def _objective_function(self, trial):
-        """Optuna objective function - samples from pre-filtered valid configurations."""
-        # Sample directly from valid configurations
-        config_idx = trial.suggest_int('config_idx', 0, len(self.valid_configs) - 1)
-        config = self.valid_configs[config_idx]
+    def _objective_function_with_params(self, trial):
+        """Optuna objective function that works with actual parameters and prunes invalid configs."""
+        # Get parameters suggested by Optuna
+        warps_m = trial.suggest_categorical('warps_m', self.param_space['warps_m'])
+        warps_n = trial.suggest_categorical('warps_n', self.param_space['warps_n'])
+        warp_tile_m = trial.suggest_categorical('warp_tile_m', self.param_space['warp_tile_m'])
+        warp_tile_n = trial.suggest_categorical('warp_tile_n', self.param_space['warp_tile_n'])
 
-        # All configs are guaranteed valid - no constraint checking needed
+        config = (warps_m, warps_n, warp_tile_m, warp_tile_n)
+
+        # Check constraints - if invalid, PRUNE the trial (don't count it)
+        if not self._check_constraints(config):
+            trial.set_user_attr("invalid_combination", True)
+            raise optuna.TrialPruned("Invalid parameter combination")
+
+        # Evaluate the valid configuration
         M, N, K, layout_a, layout_b = self.current_problem
         time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, 0, config)
 
@@ -160,27 +169,6 @@ class OptunaWMMATuner:
             print(f"  New best: {config} -> {time_ms:.3f}ms (equal, trial {self.total_evaluations})")
         else:
             print(f"  Trial {self.total_evaluations}: {config} -> {time_ms:.3f}ms")
-
-        return time_ms
-
-    def _objective_function_for_baseline(self, config):
-        """Evaluate baseline configuration."""
-        M, N, K, layout_a, layout_b = self.current_problem
-        time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, 0, config)
-
-        self.total_evaluations += 1
-
-        if time_ms < self.best_time:
-            self.best_time = time_ms
-            self.best_config = config
-            self.improvement_history.append(self.total_evaluations)
-            print(f"  Baseline result: {config} -> {time_ms:.3f}ms")
-        elif time_ms == self.best_time and self.best_time != float('inf'):
-            # Equal performance - update to newer config
-            self.best_config = config
-            print(f"  Baseline result: {config} -> {time_ms:.3f}ms (equal)")
-        else:
-            print(f"  Baseline result: {config} -> {time_ms:.3f}ms")
 
         return time_ms
 
@@ -209,20 +197,20 @@ class OptunaWMMATuner:
 
         print("Starting Optuna optimization...")
 
-        # Add baseline configurations first
-        baseline_budget = min(len(self.baselines), max_evaluations // 3)
-        for i, baseline in enumerate(self.baselines[:baseline_budget]):
-            if baseline in self.valid_configs:
-                # Find index of baseline in valid configs
-                baseline_idx = self.valid_configs.index(baseline)
+        # Add baseline configurations
+        for i, baseline in enumerate(self.baselines):
+            if self._check_constraints(baseline):
+                warps_m, warps_n, warp_tile_m, warp_tile_n = baseline
 
-                # Enqueue trial with the config index (Optuna will evaluate it)
-                study.enqueue_trial({'config_idx': baseline_idx})
+                study.enqueue_trial({
+                    'warps_m': warps_m,
+                    'warps_n': warps_n,
+                    'warp_tile_m': warp_tile_m,
+                    'warp_tile_n': warp_tile_n
+                })
 
-        # Run remaining optimization trials
-        remaining_trials = max_evaluations - self.total_evaluations
-        if remaining_trials > 0:
-            study.optimize(self._objective_function, n_trials=remaining_trials, show_progress_bar=False)
+        # Run optimization - invalid configs will be pruned automatically
+        study.optimize(self._objective_function_with_params, n_trials=max_evaluations, show_progress_bar=False)
 
         if self.best_config is None:
             print("  No valid configuration found!")
@@ -236,11 +224,17 @@ class OptunaWMMATuner:
         lds_size = (block_m * block_k) + (block_k * block_n)
         memory_used = 2 * lds_size * 2
 
+        # Count only completed (non-pruned) trials
+        completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+        pruned_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
+
         coverage = (self.total_evaluations / len(self.valid_configs)) * 100
         print(f"  Best config: {self.best_config} -> {self.best_time:.3f}ms")
         print(f"  Memory usage: {memory_used}/{self.max_shared_memory} bytes")
         print(f"  Improvements found: {len(self.improvement_history)}")
-        print(f"  Total evaluations: {self.total_evaluations}/{max_evaluations}")
+        print(f"  Valid evaluations: {self.total_evaluations}")
+        print(f"  Completed trials: {completed_trials}, Pruned trials: {pruned_trials}")
+        print(f"  Valid rate: {completed_trials/(completed_trials + pruned_trials)*100:.1f}%")
         print(f"  Space coverage: {coverage:.1f}%")
 
         return {
@@ -369,7 +363,7 @@ Examples:
   python tune.py --seed 123
 
   # Larger budget for thorough search
-  python tune.py --budget 60
+  python tune.py --budget 200
 
   # Test specific sizes
   python tune.py --sizes 1024,1024,1024 2048,2048,2048

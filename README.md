@@ -11,6 +11,24 @@ This repository aims to:
 - Explore and implement support for various matrix data layouts (e.g., row-major, column-major, potentially tiled formats) beyond the format used in the sample.
 - Tune the GEMM kernel for different M, N, K sizes
 
+## Overview
+
+This implementation leverages ROCm's Wave Matrix Multiply-Accumulate (WMMA) intrinsics to achieve high-performance GEMM operations across diverse matrix configurations and data layouts.
+
+### Performance Analysis Across Matrix Shapes
+
+Testing on AMD 7900 GRE reveals distinct performance patterns for both square and rectangular matrices:
+
+**Square Matrix Performance by Layout:**
+
+![WMMA Square Performance](docs/square.png)
+
+**Rectangular Matrix Performance by Layout:**
+
+![WMMA Rectangular Performance](docs/rectangle.png)
+
+**Key Finding**: `rocm_wmma_gemm` remains competitive with rocBLAS across diverse matrix configurations, demonstrating that WMMA intrinsics can be effectively leveraged for high-performance GEMM implementations.
+
 ## Building the Project
 
 ### Prerequisites

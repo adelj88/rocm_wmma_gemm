@@ -29,37 +29,6 @@ namespace rocm_wmma_gemm
 {
 
 /**
-  * @brief Helper function for swizzled tile mapping
-  *
-  * Computes block indices using a swizzled mapping to improve L2 cache locality.
-  * This is applied at the grid level to change the order in which tiles are
-  * processed.
-  *
-  * @param[in]  tile_id    Linear block ID
-  * @param[in]  grid_m     Number of blocks in M dimension
-  * @param[in]  grid_n     Number of blocks in N dimension
-  * @param[out] block_row  Computed block row (M dimension)
-  * @param[out] block_col  Computed block column (N dimension)
-  */
-template<int GROUP_SIZE, int BLOCK_M, int BLOCK_N>
-__device__ __forceinline__ void
-    swizzle_tile_mapping(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
-{
-    // Group tiles along the M dimension for better cache locality
-    int width      = GROUP_SIZE * grid_n;
-    int group_id   = tile_id / width;
-    int group_size = min(GROUP_SIZE, grid_m - group_id * GROUP_SIZE);
-
-    // Compute swizzled indices
-    int pid_m = group_id * GROUP_SIZE + (tile_id % group_size);
-    int pid_n = (tile_id % width) / group_size;
-
-    // Convert to actual block coordinates
-    *block_row = pid_m * BLOCK_M;
-    *block_col = pid_n * BLOCK_N;
-}
-
-/**
   * @brief Optimized Hilbert curve d2xy mapping using bit manipulation
   *
   * Converts a distance along the Hilbert curve to (x,y) coordinates using
@@ -161,15 +130,6 @@ template<int BLOCK_M, int BLOCK_N>
 __device__ __forceinline__ void
     hilbert_tile_mapping(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
 {
-    // Check bounds
-    int total_tiles = grid_m * grid_n;
-    if(tile_id >= total_tiles)
-    {
-        *block_row = 0;
-        *block_col = 0;
-        return;
-    }
-
     // Special fast path for perfect power-of-two square grids
     if(grid_m == grid_n && (grid_m & (grid_m - 1)) == 0)
     {

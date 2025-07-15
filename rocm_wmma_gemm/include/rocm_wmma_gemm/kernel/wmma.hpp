@@ -44,8 +44,7 @@ __device__ __forceinline__ auto
     typename std::enable_if<(std::is_same<T1, half>::value && std::is_same<T2, float>::value),
                             void>::type
 {
-    frag3.get()
-        = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(frag1.get(), frag2.get(), frag3.get(), false);
+    frag3.get() = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(frag1.get(), frag2.get(), frag3.get());
 }
 
 } // namespace rocm_wmma_gemm

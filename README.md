@@ -118,7 +118,7 @@ Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `
 
 ## Future Plans
 1. Add batched implementation for half GEMM
-2. Add BF16 implementation
+2. Add BF16 implementation and float accumulation support (which works, need to add API)
 3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
 4. Tuning for RDNA3.5 and RDNA4
 

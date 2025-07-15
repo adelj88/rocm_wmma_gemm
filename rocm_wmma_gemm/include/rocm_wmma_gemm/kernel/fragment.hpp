@@ -44,10 +44,11 @@ template<class T, int TILE>
 class fragment
 {
 public:
-    using underlying_type = T;
-    using type            = typename type_selector<T>::type;
-    using frag_vec        = type __attribute__((ext_vector_type(TILE)));
-    using value_type      = type;
+    static constexpr int NEW_TILE = (sizeof(T) == sizeof(float)) ? TILE / 2 : TILE;
+    using underlying_type         = T;
+    using type                    = typename type_selector<T>::type;
+    using frag_vec                = type __attribute__((ext_vector_type(NEW_TILE)));
+    using value_type              = type;
 
 private:
     frag_vec _fragment = {};
@@ -226,9 +227,10 @@ __device__ __forceinline__ auto
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r = i * 2;
+        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         if((row + r) < M && col < N)
         {
-            data[(row + r) * N + col] = frag[r];
+            data[(row + r) * N + col] = frag[s];
         }
     }
 }
@@ -240,8 +242,9 @@ __device__ __forceinline__ auto
 {
     for(int i = 0; i < TILE / 2; ++i)
     {
-        const int r               = i * 2;
-        data[(row + r) * N + col] = frag[r];
+        const int r = i * 2;
+        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        data[(row + r) * N + col] = frag[s];
     }
 }
 
@@ -253,9 +256,10 @@ __device__ __forceinline__ auto
     for(int i = 0; i < TILE / 2; ++i)
     {
         const int r = i * 2;
+        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         if((row + r) < M && col < N)
         {
-            data[col * M + (row + r)] = frag[r];
+            data[col * M + (row + r)] = frag[s];
         }
     }
 }
@@ -267,8 +271,9 @@ __device__ __forceinline__ auto
 {
     for(int i = 0; i < TILE / 2; ++i)
     {
-        const int r               = i * 2;
-        data[col * M + (row + r)] = frag[r];
+        const int r = i * 2;
+        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        data[col * M + (row + r)] = frag[s];
     }
 }
 

@@ -223,7 +223,6 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     constexpr int  primary_dim   = is_col_major ? block_n : block_m;
     constexpr int  secondary_dim = is_col_major ? block_m : block_n;
 
-    // Calculate the total size of the output tile
     constexpr int  total_tile_elements = block_m * block_n;
     constexpr int  max_shared_elements = (2 * lds_size * sizeof(U)) / sizeof(T);
     constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
@@ -232,7 +231,6 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     constexpr int  last_chunk_size
         = (remainder == 0) ? (primary_dim == 0 ? 0 : chunk_size) : remainder;
 
-    // Use T for shared memory to match accumulator precision
     T* c_tile = reinterpret_cast<T*>(lds_mem);
 
     for(int chunk_idx = 0; chunk_idx < primary_dim; chunk_idx += chunk_size)
@@ -248,6 +246,7 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
             if constexpr(is_col_major)
             {
                 // Column-major: chunk along columns
+                // Shared memory layout: block_m × current_chunk_size
                 for(int wn = 0; wn < warp_tile_n; ++wn)
                 {
                     const int n_offset = warp_n_base + wn * wmma_tile;
@@ -257,17 +256,20 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                     }
 
                     const int local_col = n_offset + half_lane - chunk_start;
+
+                    const int shared_chunk_size = is_last_iteration ? last_chunk_size : chunk_size;
                     store_matrix<LAYOUT_C, true>(c_tile,
                                                  c_frags[wm][wn],
                                                  local_row,
                                                  local_col,
                                                  block_m,
-                                                 block_n);
+                                                 shared_chunk_size);
                 }
             }
             else
             {
                 // Row-major: chunk along rows
+                // Shared memory layout: current_chunk_size × block_n
                 if(local_row < chunk_start || local_row >= chunk_end)
                 {
                     continue;
@@ -277,17 +279,20 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                 for(int wn = 0; wn < warp_tile_n; ++wn)
                 {
                     const int local_col = warp_n_base + wn * wmma_tile + half_lane;
+
+                    const int shared_chunk_size = is_last_iteration ? last_chunk_size : chunk_size;
                     store_matrix<LAYOUT_C, true>(c_tile,
                                                  c_frags[wm][wn],
                                                  m_offset,
                                                  local_col,
-                                                 block_m,
+                                                 shared_chunk_size,
                                                  block_n);
                 }
             }
         }
         __syncthreads();
 
+        // Load from shared to global (unchanged)
         if(is_last_iteration)
         {
             if constexpr(is_col_major)

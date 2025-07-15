@@ -205,7 +205,7 @@ namespace rocm_wmma_gemm
 {
 
 // Extern template declaration - this IS the kernel we'll call
-template __global__ void kernel_gemm<half, )"
+template __global__ void kernel_gemm<half, half, )"
                   << (config.layout_c == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
@@ -300,7 +300,7 @@ bool compile_kernel(const config_params& config)
 
     // Build the full template instantiation string for name expression
     std::stringstream kernel_name_ss;
-    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm<half, "
+    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm<half, half, "
                    << (config.layout_c == 0 ? "rocm_wmma_gemm::m_layout::row_major"
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", "

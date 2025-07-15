@@ -35,6 +35,7 @@ namespace rocm_wmma_gemm
 {
 
 template<class T,
+         class U,
          m_layout LAYOUT_C,
          m_layout LAYOUT_A,
          m_layout LAYOUT_B,
@@ -43,7 +44,7 @@ template<class T,
          int      warp_tile_m,
          int      warp_tile_n>
 __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
-    T* C, const T* A, const T* B, int M, int N, int K)
+    T* C, const U* A, const U* B, int M, int N, int K)
 {
     constexpr int block_m  = warps_m * warp_tile_m * wmma_tile; // 4*4*16 = 256
     constexpr int block_n  = warps_n * warp_tile_n * wmma_tile; // 4*4*16 = 256
@@ -60,15 +61,15 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     hilbert_tile_mapping<block_m, block_n>(tile_id, grid_m, grid_n, &block_row, &block_col);
 
     // Allocate a unified shared memory buffer.
-    __shared__ T lds_mem[2 * lds_size];
+    __shared__ U lds_mem[2 * lds_size];
 
     // Partition the shared memory with manual offset calculations:
     // A tiles occupy the first region in each buffer
-    T* a_tiles_0 = lds_mem;
-    T* a_tiles_1 = lds_mem + lds_size;
+    U* a_tiles_0 = lds_mem;
+    U* a_tiles_1 = lds_mem + lds_size;
     // B tiles start after A's region in each buffer
-    T* b_tiles_0 = lds_mem + (block_m * block_k);
-    T* b_tiles_1 = lds_mem + lds_size + (block_m * block_k);
+    U* b_tiles_0 = lds_mem + (block_m * block_k);
+    U* b_tiles_1 = lds_mem + lds_size + (block_m * block_k);
 
     // Each block is launched with a one-dimensional thread block.
     constexpr int full_block = warp_size * warps_m * warps_n;
@@ -81,8 +82,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     B += blockIdx.y * K * N;
     C += blockIdx.y * M * N;
 
-    const T* A_base = A + block_row * ((LAYOUT_A == m_layout::col_major) ? 1 : K);
-    const T* B_base = B + block_col * ((LAYOUT_B == m_layout::col_major) ? K : 1);
+    const U* A_base = A + block_row * ((LAYOUT_A == m_layout::col_major) ? 1 : K);
+    const U* B_base = B + block_col * ((LAYOUT_B == m_layout::col_major) ? K : 1);
 
     // Compute warp ID from the 1D thread index.
     const int warp_id  = tid / warp_size;
@@ -100,12 +101,12 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
 
     // Declare fragment storage.
     fragment<T, wmma_tile> c_frags[warp_tile_m][warp_tile_n];
-    fragment<T, wmma_tile> a_frag[warp_tile_m];
-    fragment<T, wmma_tile> b_frag[warp_tile_n];
+    fragment<U, wmma_tile> a_frag[warp_tile_m];
+    fragment<U, wmma_tile> b_frag[warp_tile_n];
 
     // Base pointers for the current A and B tiles.
-    const T* A_tile_ptr = A_base;
-    const T* B_tile_ptr = B_base;
+    const U* A_tile_ptr = A_base;
+    const U* B_tile_ptr = B_base;
 
     if(tid < half_block)
     {
@@ -117,10 +118,10 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     }
     __syncthreads();
 
-    T* current_a = a_tiles_0;
-    T* current_b = b_tiles_0;
-    T* next_a    = a_tiles_1;
-    T* next_b    = b_tiles_1;
+    U* current_a = a_tiles_0;
+    U* current_b = b_tiles_0;
+    U* next_a    = a_tiles_1;
+    U* next_b    = b_tiles_1;
 
     const int global_mult_A = (LAYOUT_A == m_layout::col_major) ? M : 1;
     const int global_mult_B = (LAYOUT_B == m_layout::col_major) ? 1 : N;
@@ -135,18 +136,18 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         {
             if(tid < half_block)
             {
-                const T* next_A = A_tile_ptr + block_k * global_mult_A;
+                const U* next_A = A_tile_ptr + block_k * global_mult_A;
                 load_to_shared<LAYOUT_A, half_block, block_m, block_k>(next_a, next_A, M, K, cid);
             }
             else
             {
-                const T* next_B = B_tile_ptr + block_k * global_mult_B;
+                const U* next_B = B_tile_ptr + block_k * global_mult_B;
                 load_to_shared<LAYOUT_B, half_block, block_k, block_n>(next_b, next_B, K, N, cid);
             }
         }
 
-        const T* curr_a = current_a + (warp_m_base + half_lane) * frag_mult_A;
-        const T* curr_b = current_b + (warp_n_base + half_lane) * frag_mult_B;
+        const U* curr_a = current_a + (warp_m_base + half_lane) * frag_mult_A;
+        const U* curr_b = current_b + (warp_n_base + half_lane) * frag_mult_B;
 
         if constexpr(warp_tile_m < warp_tile_n)
         {
@@ -224,14 +225,15 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
 
     // Calculate the total size of the output tile
     constexpr int  total_tile_elements = block_m * block_n;
-    constexpr int  max_shared_elements = 2 * lds_size;
+    constexpr int  max_shared_elements = (2 * lds_size * sizeof(U)) / sizeof(T);
     constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
     constexpr int  chunk_size = needs_chunking ? max_shared_elements / secondary_dim : primary_dim;
     constexpr int  remainder  = primary_dim % chunk_size;
     constexpr int  last_chunk_size
         = (remainder == 0) ? (primary_dim == 0 ? 0 : chunk_size) : remainder;
 
-    half* c_tile = lds_mem;
+    // Use T for shared memory to match accumulator precision
+    T* c_tile = reinterpret_cast<T*>(lds_mem);
 
     for(int chunk_idx = 0; chunk_idx < primary_dim; chunk_idx += chunk_size)
     {

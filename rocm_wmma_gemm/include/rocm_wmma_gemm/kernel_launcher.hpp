@@ -35,11 +35,17 @@ namespace detail
 {
 
 // Helper to unpack tuple as template parameters
-template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B, class Tuple, size_t... I>
+template<class T,
+         class U,
+         m_layout layout_C,
+         m_layout layout_A,
+         m_layout layout_B,
+         class Tuple,
+         size_t... I>
 __host__ void launch_kernel_impl(std::index_sequence<I...>,
                                  T*           C,
-                                 const T*     A,
-                                 const T*     B,
+                                 const U*     A,
+                                 const U*     B,
                                  size_t       M,
                                  size_t       N,
                                  size_t       K,
@@ -48,6 +54,7 @@ __host__ void launch_kernel_impl(std::index_sequence<I...>,
                                  hipStream_t& stream)
 {
     kernel_gemm<T,
+                U,
                 layout_C,
                 layout_A,
                 layout_B,
@@ -59,16 +66,16 @@ __host__ void launch_kernel_impl(std::index_sequence<I...>,
 }
 
 // Template to generate dispatch table
-template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B, size_t... I>
+template<class T, class U, m_layout layout_C, m_layout layout_A, m_layout layout_B, size_t... I>
 constexpr auto make_dispatch_table(std::index_sequence<I...>)
 {
     using kernel_func
-        = void (*)(T*, const T*, const T*, size_t, size_t, size_t, dim3, dim3, hipStream_t&);
+        = void (*)(T*, const U*, const U*, size_t, size_t, size_t, dim3, dim3, hipStream_t&);
 
     return std::array<kernel_func, sizeof...(I)>{
         [](T*           C,
-           const T*     A,
-           const T*     B,
+           const U*     A,
+           const U*     B,
            size_t       M,
            size_t       N,
            size_t       K,
@@ -77,6 +84,7 @@ constexpr auto make_dispatch_table(std::index_sequence<I...>)
            hipStream_t& stream)
         {
             kernel_gemm<T,
+                        U,
                         layout_C,
                         layout_A,
                         layout_B,
@@ -90,17 +98,17 @@ constexpr auto make_dispatch_table(std::index_sequence<I...>)
 
 } // namespace detail
 
-template<class T, m_layout layout_C, m_layout layout_A, m_layout layout_B>
+template<class T, class U, m_layout layout_C, m_layout layout_A, m_layout layout_B>
 struct kernel_launcher
 {
     static constexpr auto dispatch_table
-        = detail::make_dispatch_table<T, layout_C, layout_A, layout_B>(
+        = detail::make_dispatch_table<T, U, layout_C, layout_A, layout_B>(
             std::make_index_sequence<KERNEL_VARIANTS>{});
 
     static void launch(const gemm_params& params,
                        T*                 C,
-                       const T*           A,
-                       const T*           B,
+                       const U*           A,
+                       const U*           B,
                        size_t             M,
                        size_t             N,
                        size_t             K,

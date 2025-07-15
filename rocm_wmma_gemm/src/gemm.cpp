@@ -36,16 +36,16 @@ __host__ void gemm(half*        C,
     dim3 block_dim(warp_size * params.warps_m * params.warps_n);
 
     // Launch kernel using the template launcher
-    kernel_launcher<half, layout_C, layout_A, layout_B>::launch(params,
-                                                                C,
-                                                                A,
-                                                                B,
-                                                                M,
-                                                                N,
-                                                                K,
-                                                                grid_dim,
-                                                                block_dim,
-                                                                stream);
+    kernel_launcher<half, half, layout_C, layout_A, layout_B>::launch(params,
+                                                                      C,
+                                                                      A,
+                                                                      B,
+                                                                      M,
+                                                                      N,
+                                                                      K,
+                                                                      grid_dim,
+                                                                      block_dim,
+                                                                      stream);
 }
 
 template __host__ void gemm<m_layout::row_major, m_layout::col_major, m_layout::col_major>(

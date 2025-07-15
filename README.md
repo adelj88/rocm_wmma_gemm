@@ -4,6 +4,8 @@
 
 This repository provides a standalone, high-performance General Matrix Multiplication (GEMM) implementation optimized for AMD GPUs using ROCm's Wave Matrix Multiply-Accumulate (WMMA) intrinsics. It is derived from the fastest half-precision GEMM kernel developed in the `hgemm` sample within the [rocm_wmma_samples](https://github.com/adelj88/rocm_wmma_samples/tree/main/hgemm) project. This new repository refactors the kernel to facilitate exploration of different matrix data layouts and further optimizations.
 
+Take note that the library isn't fully tuned, and has been only tuned for some sizes (if you pass inputs that are calculated as close to the tuned sizes, the right configuration will be selected). The current workflow of this library is to tune for the specific sizes of your use-case before building. This may be improved upon in the future if time permits.
+
 ## Purpose
 This repository aims to:
 - Provide a focused, high-performance GEMM kernel utilizing ROCm WMMA intrinsics.
@@ -59,10 +61,12 @@ Run the executable after building:
 ```bash
 # Assumes you're currently in /build directory
 # To run unit tests
-./test/gemm_test
+./test/test_float_accum
+./test/test_same_prec
 
 # To run unit benchmarks
-./benchmark/gemm_bench
+./benchmark/bench_float_half
+./benchmark/bench_half_half
 
 # To run rocblas equivalent for verification
 ./test/rocblas_test
@@ -118,7 +122,7 @@ Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `
 
 ## Future Plans
 1. Add batched implementation for half GEMM
-2. Add BF16 implementation and float accumulation support (which works, need to add API)
+2. Add BF16 implementation
 3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
 4. Tuning for RDNA3.5 and RDNA4
 

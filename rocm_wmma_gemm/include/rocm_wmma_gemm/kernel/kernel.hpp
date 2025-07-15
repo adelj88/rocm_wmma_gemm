@@ -207,145 +207,152 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         __syncthreads();
     }
 
-#ifdef NO_SHARED_WRITE
-    for(int wm = 0; wm < warp_tile_m; ++wm)
+    // TODO: Figure out why float doesn't work with shared chunking for some cases when row-major
+    // is the output
+    if constexpr(std::is_same<T, float>::value || std::is_same<T, int>::value)
     {
-        const int global_row = block_row + warp_m_base + wm * wmma_tile + half_warp_id;
-        for(int wn = 0; wn < warp_tile_n; ++wn)
-        {
-            const int n_offset   = wn * wmma_tile + half_lane;
-            const int global_col = block_col + warp_n_base + n_offset;
-            store_matrix<LAYOUT_C, false>(C, c_frags[wm][wn], global_row, global_col, M, N);
-        }
-    }
-#else
-    constexpr bool is_col_major  = (LAYOUT_C == m_layout::col_major);
-    constexpr int  primary_dim   = is_col_major ? block_n : block_m;
-    constexpr int  secondary_dim = is_col_major ? block_m : block_n;
-
-    constexpr int  total_tile_elements = block_m * block_n;
-    constexpr int  max_shared_elements = (2 * lds_size * sizeof(U)) / sizeof(T);
-    constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
-    constexpr int  chunk_size = needs_chunking ? max_shared_elements / secondary_dim : primary_dim;
-    constexpr int  remainder  = primary_dim % chunk_size;
-    constexpr int  last_chunk_size
-        = (remainder == 0) ? (primary_dim == 0 ? 0 : chunk_size) : remainder;
-
-    T* c_tile = reinterpret_cast<T*>(lds_mem);
-
-    for(int chunk_idx = 0; chunk_idx < primary_dim; chunk_idx += chunk_size)
-    {
-        const int chunk_start       = chunk_idx;
-        const int chunk_end         = std::min(chunk_start + chunk_size, primary_dim);
-        bool      is_last_iteration = (chunk_start + chunk_size >= primary_dim);
-
         for(int wm = 0; wm < warp_tile_m; ++wm)
         {
-            const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
-
-            if constexpr(is_col_major)
+            const int global_row = block_row + warp_m_base + wm * wmma_tile + half_warp_id;
+            for(int wn = 0; wn < warp_tile_n; ++wn)
             {
-                // Column-major: chunk along columns
-                // Shared memory layout: block_m × current_chunk_size
-                for(int wn = 0; wn < warp_tile_n; ++wn)
+                const int n_offset   = wn * wmma_tile + half_lane;
+                const int global_col = block_col + warp_n_base + n_offset;
+                store_matrix<LAYOUT_C, false>(C, c_frags[wm][wn], global_row, global_col, M, N);
+            }
+        }
+    }
+    else
+    {
+        constexpr bool is_col_major  = (LAYOUT_C == m_layout::col_major);
+        constexpr int  primary_dim   = is_col_major ? block_n : block_m;
+        constexpr int  secondary_dim = is_col_major ? block_m : block_n;
+
+        constexpr int  total_tile_elements = block_m * block_n;
+        constexpr int  max_shared_elements = (2 * lds_size * sizeof(U)) / sizeof(T);
+        constexpr bool needs_chunking      = total_tile_elements > max_shared_elements;
+        constexpr int  chunk_size
+            = needs_chunking ? max_shared_elements / secondary_dim : primary_dim;
+        constexpr int remainder = primary_dim % chunk_size;
+        constexpr int last_chunk_size
+            = (remainder == 0) ? (primary_dim == 0 ? 0 : chunk_size) : remainder;
+
+        T* c_tile = reinterpret_cast<T*>(lds_mem);
+
+        for(int chunk_idx = 0; chunk_idx < primary_dim; chunk_idx += chunk_size)
+        {
+            const int chunk_start       = chunk_idx;
+            const int chunk_end         = std::min(chunk_start + chunk_size, primary_dim);
+            bool      is_last_iteration = (chunk_start + chunk_size >= primary_dim);
+
+            for(int wm = 0; wm < warp_tile_m; ++wm)
+            {
+                const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
+
+                if constexpr(is_col_major)
                 {
-                    const int n_offset = warp_n_base + wn * wmma_tile;
-                    if(n_offset >= chunk_end || n_offset + wmma_tile <= chunk_start)
+                    // Column-major: chunk along columns
+                    // Shared memory layout: block_m × current_chunk_size
+                    for(int wn = 0; wn < warp_tile_n; ++wn)
+                    {
+                        const int n_offset = warp_n_base + wn * wmma_tile;
+                        if(n_offset >= chunk_end || n_offset + wmma_tile <= chunk_start)
+                        {
+                            continue;
+                        }
+
+                        const int local_col = n_offset + half_lane - chunk_start;
+
+                        const int shared_chunk_size
+                            = is_last_iteration ? last_chunk_size : chunk_size;
+                        store_matrix<LAYOUT_C, true>(c_tile,
+                                                     c_frags[wm][wn],
+                                                     local_row,
+                                                     local_col,
+                                                     block_m,
+                                                     shared_chunk_size);
+                    }
+                }
+                else
+                {
+                    // Row-major: chunk along rows
+                    // Shared memory layout: current_chunk_size × block_n
+                    if(local_row < chunk_start || local_row >= chunk_end)
                     {
                         continue;
                     }
+                    const int m_offset = local_row - chunk_start;
 
-                    const int local_col = n_offset + half_lane - chunk_start;
+                    for(int wn = 0; wn < warp_tile_n; ++wn)
+                    {
+                        const int local_col = warp_n_base + wn * wmma_tile + half_lane;
 
-                    const int shared_chunk_size = is_last_iteration ? last_chunk_size : chunk_size;
-                    store_matrix<LAYOUT_C, true>(c_tile,
-                                                 c_frags[wm][wn],
-                                                 local_row,
-                                                 local_col,
-                                                 block_m,
-                                                 shared_chunk_size);
+                        const int shared_chunk_size
+                            = is_last_iteration ? last_chunk_size : chunk_size;
+                        store_matrix<LAYOUT_C, true>(c_tile,
+                                                     c_frags[wm][wn],
+                                                     m_offset,
+                                                     local_col,
+                                                     shared_chunk_size,
+                                                     block_n);
+                    }
                 }
             }
-            else
+            __syncthreads();
+
+            if(is_last_iteration)
             {
-                // Row-major: chunk along rows
-                // Shared memory layout: current_chunk_size × block_n
-                if(local_row < chunk_start || local_row >= chunk_end)
+                if constexpr(is_col_major)
                 {
-                    continue;
+                    load_shared_to_global<LAYOUT_C, full_block, block_m, last_chunk_size>(
+                        C,
+                        c_tile,
+                        block_row,
+                        block_col + chunk_start,
+                        M,
+                        N,
+                        tid);
                 }
-                const int m_offset = local_row - chunk_start;
-
-                for(int wn = 0; wn < warp_tile_n; ++wn)
+                else
                 {
-                    const int local_col = warp_n_base + wn * wmma_tile + half_lane;
-
-                    const int shared_chunk_size = is_last_iteration ? last_chunk_size : chunk_size;
-                    store_matrix<LAYOUT_C, true>(c_tile,
-                                                 c_frags[wm][wn],
-                                                 m_offset,
-                                                 local_col,
-                                                 shared_chunk_size,
-                                                 block_n);
+                    load_shared_to_global<LAYOUT_C, full_block, last_chunk_size, block_n>(
+                        C,
+                        c_tile,
+                        block_row + chunk_start,
+                        block_col,
+                        M,
+                        N,
+                        tid);
                 }
             }
-        }
-        __syncthreads();
-
-        // Load from shared to global (unchanged)
-        if(is_last_iteration)
-        {
-            if constexpr(is_col_major)
-            {
-                load_shared_to_global<LAYOUT_C, full_block, block_m, last_chunk_size>(
-                    C,
-                    c_tile,
-                    block_row,
-                    block_col + chunk_start,
-                    M,
-                    N,
-                    tid);
-            }
             else
             {
-                load_shared_to_global<LAYOUT_C, full_block, last_chunk_size, block_n>(
-                    C,
-                    c_tile,
-                    block_row + chunk_start,
-                    block_col,
-                    M,
-                    N,
-                    tid);
+                if constexpr(is_col_major)
+                {
+                    load_shared_to_global<LAYOUT_C, full_block, block_m, chunk_size>(
+                        C,
+                        c_tile,
+                        block_row,
+                        block_col + chunk_start,
+                        M,
+                        N,
+                        tid);
+                }
+                else
+                {
+                    load_shared_to_global<LAYOUT_C, full_block, chunk_size, block_n>(
+                        C,
+                        c_tile,
+                        block_row + chunk_start,
+                        block_col,
+                        M,
+                        N,
+                        tid);
+                }
             }
+            __syncthreads();
         }
-        else
-        {
-            if constexpr(is_col_major)
-            {
-                load_shared_to_global<LAYOUT_C, full_block, block_m, chunk_size>(C,
-                                                                                 c_tile,
-                                                                                 block_row,
-                                                                                 block_col
-                                                                                     + chunk_start,
-                                                                                 M,
-                                                                                 N,
-                                                                                 tid);
-            }
-            else
-            {
-                load_shared_to_global<LAYOUT_C, full_block, chunk_size, block_n>(C,
-                                                                                 c_tile,
-                                                                                 block_row
-                                                                                     + chunk_start,
-                                                                                 block_col,
-                                                                                 M,
-                                                                                 N,
-                                                                                 tid);
-            }
-        }
-        __syncthreads();
     }
-#endif
 }
 
 } // namespace rocm_wmma_gemm

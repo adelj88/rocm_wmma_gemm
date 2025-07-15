@@ -65,8 +65,8 @@ void init_identity_matrix(matrix<T, L>& identity)
 /**
  * @brief CPU reference implementation
  */
-template<m_layout L1, m_layout L2, m_layout L3>
-void hgemm_cpu(matrix<half, L1>& C, const matrix<half, L2>& A, const matrix<half, L3>& B)
+template<m_layout L1, m_layout L2, m_layout L3, class T>
+void hgemm_cpu(matrix<T, L1>& C, const matrix<T, L2>& A, const matrix<T, L3>& B)
 {
     for(size_t i = 0; i < C.m(); ++i)
     {
@@ -77,7 +77,24 @@ void hgemm_cpu(matrix<half, L1>& C, const matrix<half, L2>& A, const matrix<half
             {
                 acc += static_cast<float>(A(i, k)) * static_cast<float>(B(k, j));
             }
-            C(i, j) = static_cast<half>(acc);
+            C(i, j) = static_cast<T>(acc);
+        }
+    }
+}
+
+template<m_layout L1, m_layout L2, m_layout L3, class T, class U>
+void hgemm_cpu(matrix<T, L1>& C, const matrix<U, L2>& A, const matrix<U, L3>& B)
+{
+    for(size_t i = 0; i < C.m(); ++i)
+    {
+        for(size_t j = 0; j < C.n(); ++j)
+        {
+            T acc = T(0);
+            for(size_t k = 0; k < A.n(); ++k)
+            {
+                acc += static_cast<T>(A(i, k)) * static_cast<T>(B(k, j));
+            }
+            C(i, j) = acc;
         }
     }
 }

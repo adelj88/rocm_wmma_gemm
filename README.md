@@ -65,12 +65,14 @@ Run the executable after building:
 ./test/test_same_prec
 
 # To run unit benchmarks
+./benchmark/bench_bf16_bf16
+./benchmark/bench_float_bf16
 ./benchmark/bench_float_half
 ./benchmark/bench_half_half
 
 # To run rocblas equivalent for verification
-./test/rocblas_test
-./benchmark/rocblas_bench
+./test/test_rocblas
+./benchmark/bench_rocblas
 ```
 
 ### Automatic Kernel Tuning
@@ -122,9 +124,8 @@ Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `
 
 ## Future Plans
 1. Add batched implementation for half GEMM
-2. Add BF16 implementation
-3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
-4. Tuning for RDNA3.5 and RDNA4
+2. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
+3. Tuning for RDNA3.5 and RDNA4
 
 ## License
 

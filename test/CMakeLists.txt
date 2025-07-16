@@ -17,11 +17,11 @@ target_include_directories(test_same_prec PRIVATE ${PROJECT_SOURCE_DIR} ${CMAKE_
 target_link_libraries(test_same_prec PRIVATE rocm_wmma_gemm GTest::GTest GTest::Main)
 
 # Create an executable target
-add_executable(rocblas_test rocblas/test.cpp)
+add_executable(test_rocblas rocblas/test.cpp)
 
 # Include HIP include directories
-target_include_directories(rocblas_test PRIVATE ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(test_rocblas PRIVATE ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Link HIP libraries
-target_link_libraries(rocblas_test PRIVATE rocblas_wrapper GTest::GTest GTest::Main)
+target_link_libraries(test_rocblas PRIVATE rocblas_wrapper GTest::GTest GTest::Main)
 

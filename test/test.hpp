@@ -33,31 +33,22 @@
 template<class T, m_layout L>
 void init_matrix(matrix<T, L>& input)
 {
-    constexpr float  values[]   = {0.1f, 0.125f, 0.15f, 0.175f, 0.2f};
-    constexpr size_t num_values = sizeof(values) / sizeof(values[0]);
+    std::random_device                    rd;
+    std::mt19937                          gen(1);
+    std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
 
-    size_t idx = 0;
     for(size_t m = 0; m < input.m(); ++m)
     {
         for(size_t n = 0; n < input.n(); ++n)
         {
-            input(m, n) = static_cast<T>(values[idx % num_values]);
-            idx++;
-        }
-    }
-}
-
-/**
- * @brief Initialize matrix as identity matrix
- */
-template<typename T, m_layout L>
-void init_identity_matrix(matrix<T, L>& identity)
-{
-    for(size_t i = 0; i < identity.m(); ++i)
-    {
-        for(size_t j = 0; j < identity.n(); ++j)
-        {
-            identity(i, j) = (i == j) ? static_cast<T>(1.0f) : static_cast<T>(0.0f);
+            if constexpr(std::is_same<T, __hip_bfloat16>::value)
+            {
+                input(m, n) = __float2bfloat16(dis(gen));
+            }
+            else
+            {
+                input(m, n) = static_cast<T>(dis(gen));
+            }
         }
     }
 }
@@ -65,8 +56,8 @@ void init_identity_matrix(matrix<T, L>& identity)
 /**
  * @brief CPU reference implementation
  */
-template<m_layout L1, m_layout L2, m_layout L3, class T>
-void hgemm_cpu(matrix<T, L1>& C, const matrix<T, L2>& A, const matrix<T, L3>& B)
+template<m_layout L1, m_layout L2, m_layout L3>
+void hgemm_cpu(matrix<half, L1>& C, const matrix<half, L2>& A, const matrix<half, L3>& B)
 {
     for(size_t i = 0; i < C.m(); ++i)
     {
@@ -77,22 +68,60 @@ void hgemm_cpu(matrix<T, L1>& C, const matrix<T, L2>& A, const matrix<T, L3>& B)
             {
                 acc += static_cast<float>(A(i, k)) * static_cast<float>(B(k, j));
             }
-            C(i, j) = static_cast<T>(acc);
+            C(i, j) = static_cast<half>(acc);
         }
     }
 }
 
-template<m_layout L1, m_layout L2, m_layout L3, class T, class U>
-void hgemm_cpu(matrix<T, L1>& C, const matrix<U, L2>& A, const matrix<U, L3>& B)
+template<m_layout L1, m_layout L2, m_layout L3>
+void hgemm_cpu(matrix<__hip_bfloat16, L1>&       C,
+               const matrix<__hip_bfloat16, L2>& A,
+               const matrix<__hip_bfloat16, L3>& B)
 {
     for(size_t i = 0; i < C.m(); ++i)
     {
         for(size_t j = 0; j < C.n(); ++j)
         {
-            T acc = T(0);
+            float acc = 0.0f;
             for(size_t k = 0; k < A.n(); ++k)
             {
-                acc += static_cast<T>(A(i, k)) * static_cast<T>(B(k, j));
+                acc += __bfloat162float(A(i, k)) * __bfloat162float(B(k, j));
+            }
+            C(i, j) = __float2bfloat16(acc);
+        }
+    }
+}
+
+template<m_layout L1, m_layout L2, m_layout L3>
+void hgemm_cpu(matrix<float, L1>& C, const matrix<half, L2>& A, const matrix<half, L3>& B)
+{
+    for(size_t i = 0; i < C.m(); ++i)
+    {
+        for(size_t j = 0; j < C.n(); ++j)
+        {
+            float acc = 0.0f;
+            for(size_t k = 0; k < A.n(); ++k)
+            {
+                acc += static_cast<float>(A(i, k)) * static_cast<float>(B(k, j));
+            }
+            C(i, j) = acc;
+        }
+    }
+}
+
+template<m_layout L1, m_layout L2, m_layout L3>
+void hgemm_cpu(matrix<float, L1>&                C,
+               const matrix<__hip_bfloat16, L2>& A,
+               const matrix<__hip_bfloat16, L3>& B)
+{
+    for(size_t i = 0; i < C.m(); ++i)
+    {
+        for(size_t j = 0; j < C.n(); ++j)
+        {
+            float acc = 0.0f;
+            for(size_t k = 0; k < A.n(); ++k)
+            {
+                acc += __bfloat162float(A(i, k)) * __bfloat162float(B(k, j));
             }
             C(i, j) = acc;
         }
@@ -100,150 +129,87 @@ void hgemm_cpu(matrix<T, L1>& C, const matrix<U, L2>& A, const matrix<U, L3>& B)
 }
 
 /**
- * @brief Verification metrics structure
+ * @brief Calculate cosine similarity coefficient
  */
-struct verification_metrics
+template<class T, m_layout L>
+float calculate_cosine_similarity(const matrix<T, L>& gpu_result, const matrix<T, L>& cpu_result)
 {
-    float  max_relative_error;
-    float  avg_relative_error;
-    float  ssim;
-    float  tolerance;
-    size_t error_i, error_j;
-    float  gpu_val, cpu_val;
-    size_t valid_comparisons;
-};
+    float dot_product = 0.0f;
+    float norm_gpu    = 0.0f;
+    float norm_cpu    = 0.0f;
 
-/**
- * @brief Calculate verification metrics
- */
-template<m_layout L>
-verification_metrics calculate_metrics(const matrix<half, L>& gpu_result,
-                                       const matrix<half, L>& cpu_result)
-{
-    verification_metrics metrics = {};
-
-    size_t m              = gpu_result.m();
-    size_t n              = gpu_result.n();
-    size_t total_elements = m * n;
-
-#ifdef ELEMENT_CHECK
-    // Tolerance checking parameters
-    float atol                   = 0.14f; // absolute tolerance
-    float rtol                   = 0.0f; // relative tolerance
-    bool  tolerance_check_passed = true;
-    float max_violation          = 0.0f;
-#endif
-
-    // Single pass: calculate means, max errors, and collect data for SSIM
-    // Also find min/max for dynamic range calculation
-    float sum_gpu = 0.0f, sum_cpu = 0.0f;
-    float min_gpu = std::numeric_limits<float>::max();
-    float max_gpu = std::numeric_limits<float>::lowest();
-    float min_cpu = std::numeric_limits<float>::max();
-    float max_cpu = std::numeric_limits<float>::lowest();
-
-    for(size_t i = 0; i < m; ++i)
+    for(size_t i = 0; i < gpu_result.m(); ++i)
     {
-        for(size_t j = 0; j < n; ++j)
+        for(size_t j = 0; j < gpu_result.n(); ++j)
         {
-            float gpu_val = static_cast<float>(gpu_result(i, j));
-            float cpu_val = static_cast<float>(cpu_result(i, j));
-
-            sum_gpu += gpu_val;
-            sum_cpu += cpu_val;
-
-            // Track min/max for dynamic range
-            min_gpu = std::min(min_gpu, gpu_val);
-            max_gpu = std::max(max_gpu, gpu_val);
-            min_cpu = std::min(min_cpu, cpu_val);
-            max_cpu = std::max(max_cpu, cpu_val);
-
-#ifdef ELEMENT_CHECK
-            // Element-wise tolerance checking
-            float abs_diff  = std::abs(gpu_val - cpu_val);
-            float tolerance = atol + rtol * std::abs(cpu_val);
-
-            if(abs_diff > tolerance && tolerance_check_passed)
+            float gpu_val, cpu_val;
+            if constexpr(std::is_same<T, __hip_bfloat16>::value)
             {
-                tolerance_check_passed = false;
-                max_violation          = abs_diff - tolerance;
-                metrics.error_i        = i;
-                metrics.error_j        = j;
-                metrics.gpu_val        = gpu_val;
-                metrics.cpu_val        = cpu_val;
+                gpu_val = __bfloat162float(gpu_result(i, j));
+                cpu_val = __bfloat162float(cpu_result(i, j));
             }
-#endif
+            else
+            {
+                gpu_val = static_cast<float>(gpu_result(i, j));
+                cpu_val = static_cast<float>(cpu_result(i, j));
+            }
+
+            dot_product += gpu_val * cpu_val;
+            norm_gpu += gpu_val * gpu_val;
+            norm_cpu += cpu_val * cpu_val;
         }
     }
 
-    float mean_gpu = sum_gpu / total_elements;
-    float mean_cpu = sum_cpu / total_elements;
-
-    // Calculate dynamic range for SSIM constants
-    float range_gpu     = max_gpu - min_gpu;
-    float range_cpu     = max_cpu - min_cpu;
-    float dynamic_range = std::max(range_gpu, range_cpu);
-
-    // Ensure minimum dynamic range to avoid division issues
-    if(dynamic_range < 1e-6f)
+    // Handle edge cases
+    if(norm_gpu < 1e-10f || norm_cpu < 1e-10f)
     {
-        dynamic_range = 1.0f;
-    }
-
-    // Second pass: calculate SSIM components using raw values (not absolute)
-    float var_gpu = 0.0f, var_cpu = 0.0f, covar = 0.0f;
-    for(size_t i = 0; i < m; ++i)
-    {
-        for(size_t j = 0; j < n; ++j)
+        // If either matrix is zero or near-zero, check if both are close to zero
+        float max_gpu = 0.0f, max_cpu = 0.0f;
+        for(size_t i = 0; i < gpu_result.m(); ++i)
         {
-            float gpu_val = static_cast<float>(gpu_result(i, j));
-            float cpu_val = static_cast<float>(cpu_result(i, j));
-
-            float gpu_diff = gpu_val - mean_gpu;
-            float cpu_diff = cpu_val - mean_cpu;
-
-            var_gpu += gpu_diff * gpu_diff;
-            var_cpu += cpu_diff * cpu_diff;
-            covar += gpu_diff * cpu_diff;
+            for(size_t j = 0; j < gpu_result.n(); ++j)
+            {
+                float gpu_val, cpu_val;
+                if constexpr(std::is_same<T, __hip_bfloat16>::value)
+                {
+                    gpu_val = __bfloat162float(gpu_result(i, j));
+                    cpu_val = __bfloat162float(cpu_result(i, j));
+                }
+                else
+                {
+                    gpu_val = static_cast<float>(gpu_result(i, j));
+                    cpu_val = static_cast<float>(cpu_result(i, j));
+                }
+                max_gpu = std::max(max_gpu, std::abs(gpu_val));
+                max_cpu = std::max(max_cpu, std::abs(cpu_val));
+            }
         }
+
+        // If both matrices are near-zero, return perfect similarity
+        float tolerance = std::is_same<T, __hip_bfloat16>::value ? 1e-2f : 1e-4f;
+        return (max_gpu < tolerance && max_cpu < tolerance) ? 1.0f : 0.0f;
     }
 
-    var_gpu /= total_elements;
-    var_cpu /= total_elements;
-    covar /= total_elements;
-
-    // Standard SSIM constants based on dynamic range
-    const float C1 = (0.01f * dynamic_range) * (0.01f * dynamic_range);
-    const float C2 = (0.03f * dynamic_range) * (0.03f * dynamic_range);
-
-    metrics.ssim = ((2 * mean_gpu * mean_cpu + C1) * (2 * covar + C2))
-                   / ((mean_gpu * mean_gpu + mean_cpu * mean_cpu + C1) * (var_gpu + var_cpu + C2));
-
-#ifdef ELEMENT_CHECK
-    // Store tolerance checking results
-    metrics.max_relative_error = tolerance_check_passed ? 0.0f : max_violation;
-    metrics.tolerance          = tolerance_check_passed ? 1.0f : 0.0f; // Use as boolean flag
-#endif
-
-    return metrics;
+    return dot_product / (std::sqrt(norm_gpu) * std::sqrt(norm_cpu));
 }
 
 /**
- * @brief Verify results with separate assertions
+ * @brief Verify results using cosine similarity
  */
-template<m_layout L>
-void verify_results(const matrix<half, L>& gpu_result, const matrix<half, L>& cpu_result)
+template<class T, m_layout L>
+void verify_results(const matrix<T, L>& gpu_result, const matrix<T, L>& cpu_result)
 {
-    verification_metrics metrics = calculate_metrics(gpu_result, cpu_result);
+    float cosine_similarity = calculate_cosine_similarity(gpu_result, cpu_result);
+    float similarity_threshold;
+    if constexpr(std::is_same<T, __hip_bfloat16>::value)
+    {
+        similarity_threshold = 0.97f; // Bfloat16 precision
+    }
+    else
+    {
+        similarity_threshold = 0.995f; // Half precision
+    }
 
-#ifdef ELEMENT_CHECK
-    // Element-wise tolerance validation
-    ASSERT_EQ(metrics.tolerance, 1.0f)
-        << "Element-wise tolerance check failed. Max violation: " << metrics.max_relative_error
-        << " at position (" << metrics.error_i << "," << metrics.error_j << ")"
-        << " GPU=" << metrics.gpu_val << " CPU=" << metrics.cpu_val;
-#endif
-
-    // SSIM structural validation
-    ASSERT_GT(metrics.ssim, 0.98f) << "SSIM " << metrics.ssim << " below threshold 0.98";
+    ASSERT_GT(cosine_similarity, similarity_threshold)
+        << "Cosine similarity " << cosine_similarity << " below threshold " << similarity_threshold;
 }

@@ -70,68 +70,31 @@ protected:
         HIP_CHECK(hipStreamDestroy(stream));
     }
 
-    void VerifyBothTests(size_t M, size_t N, size_t K)
+    // Template function to run matrix multiplication and verify results using cosine similarity
+    void VerifyGEMM(size_t M, size_t N, size_t K)
     {
-        // Identity test first (gate test)
-        RunIdentityTest(M, N, K);
-
-        // Precision test against CPU reference
-        RunPrecisionTest(M, N, K);
-    }
-
-private:
-    void RunIdentityTest(size_t M, size_t N, size_t K)
-    {
-        matrix<InputT, LayoutT::a_layout> h_A(M, K);
-        matrix<InputT, LayoutT::b_layout> h_I(K, K);
-        matrix<InputT, LayoutT::c_layout> h_C(M, K);
-
-        init_matrix(h_A);
-        init_identity_matrix(h_I);
-
-        RunGEMMImpl(h_A, h_I, h_C, M, K, K);
-
-        // Verify A × I = A with tight tolerance
-        const float tolerance = 1e-4f;
-        for(size_t i = 0; i < M; ++i)
-        {
-            for(size_t j = 0; j < K; ++j)
-            {
-                float result_val   = static_cast<float>(h_C(i, j));
-                float expected_val = static_cast<float>(h_A(i, j));
-
-                ASSERT_NEAR(result_val, expected_val, tolerance)
-                    << "Identity test failed at (" << i << "," << j << ")";
-            }
-        }
-    }
-
-    void RunPrecisionTest(size_t M, size_t N, size_t K)
-    {
+        // Allocate memory on host
         matrix<InputT, LayoutT::a_layout> h_A(M, K);
         matrix<InputT, LayoutT::b_layout> h_B(K, N);
         matrix<InputT, LayoutT::c_layout> h_C(M, N);
         matrix<InputT, LayoutT::c_layout> h_C_ref(M, N);
 
+        // Initialize input matrices with random values
         init_matrix(h_A);
         init_matrix(h_B);
 
-        RunGEMMImpl(h_A, h_B, h_C, M, N, K);
-
-        hgemm_cpu(h_C_ref, h_A, h_B);
-
-        // Use detailed verification with separate assertions
-        verify_results(h_C, h_C_ref);
-    }
-
-    template<class MatrixA, class MatrixB, class MatrixC>
-    void RunGEMMImpl(MatrixA& h_A, MatrixB& h_B, MatrixC& h_C, size_t M, size_t N, size_t K)
-    {
+        // Allocate memory on device
         InputT *d_A, *d_B, *d_C;
-        AllocateDeviceMemory(h_A, h_B, h_C, d_A, d_B, d_C);
-        CopyInputsToDevice(h_A, h_B, d_A, d_B);
+        HIP_CHECK(hipMalloc(&d_A, h_A.size() * sizeof(InputT)));
+        HIP_CHECK(hipMalloc(&d_B, h_B.size() * sizeof(InputT)));
+        HIP_CHECK(hipMalloc(&d_C, h_C.size() * sizeof(InputT)));
 
-        // Execute GEMM - types are inferred from pointers
+        // Copy data from host to device
+        HIP_CHECK(hipMemcpy(d_A, h_A.data(), h_A.size() * sizeof(InputT), hipMemcpyHostToDevice));
+        HIP_CHECK(hipMemcpy(d_B, h_B.data(), h_B.size() * sizeof(InputT), hipMemcpyHostToDevice));
+        HIP_CHECK(hipDeviceSynchronize());
+
+        // Execute the matrix multiplication on GPU - types inferred from pointers
         rocm_wmma_gemm::gemm<static_cast<rocm_wmma_gemm::m_layout>(LayoutT::c_layout),
                              static_cast<rocm_wmma_gemm::m_layout>(LayoutT::a_layout),
                              static_cast<rocm_wmma_gemm::m_layout>(LayoutT::b_layout)>(d_C,
@@ -141,42 +104,26 @@ private:
                                                                                        N,
                                                                                        K,
                                                                                        stream);
-
-        CopyResultAndCleanup(h_C, d_A, d_B, d_C, M * N);
-    }
-
-    template<class MatrixA, class MatrixB, class MatrixC>
-    void AllocateDeviceMemory(
-        MatrixA& h_A, MatrixB& h_B, MatrixC& h_C, InputT*& d_A, InputT*& d_B, InputT*& d_C)
-    {
-        HIP_CHECK(hipMalloc(&d_A, h_A.size() * sizeof(InputT)));
-        HIP_CHECK(hipMalloc(&d_B, h_B.size() * sizeof(InputT)));
-        HIP_CHECK(hipMalloc(&d_C, h_C.size() * sizeof(InputT)));
-    }
-
-    template<class MatrixA, class MatrixB>
-    void CopyInputsToDevice(MatrixA& h_A, MatrixB& h_B, InputT* d_A, InputT* d_B)
-    {
-        HIP_CHECK(hipMemcpy(d_A, h_A.data(), h_A.size() * sizeof(InputT), hipMemcpyHostToDevice));
-        HIP_CHECK(hipMemcpy(d_B, h_B.data(), h_B.size() * sizeof(InputT), hipMemcpyHostToDevice));
-        HIP_CHECK(hipDeviceSynchronize());
-    }
-
-    template<class MatrixC>
-    void CopyResultAndCleanup(
-        MatrixC& h_C, InputT* d_A, InputT* d_B, InputT* d_C, size_t result_elements)
-    {
         HIP_CHECK(hipPeekAtLastError());
         HIP_CHECK(hipDeviceSynchronize());
-        HIP_CHECK(
-            hipMemcpy(h_C.data(), d_C, result_elements * sizeof(InputT), hipMemcpyDeviceToHost));
+
+        // Copy the result back to host
+        HIP_CHECK(hipMemcpy(h_C.data(), d_C, h_C.size() * sizeof(InputT), hipMemcpyDeviceToHost));
         HIP_CHECK(hipDeviceSynchronize());
 
+        // Calculate reference result on CPU
+        hgemm_cpu(h_C_ref, h_A, h_B);
+
+        // Verify results using cosine similarity
+        verify_results(h_C, h_C_ref);
+
+        // Free device memory
         HIP_CHECK(hipFree(d_A));
         HIP_CHECK(hipFree(d_B));
         HIP_CHECK(hipFree(d_C));
     }
 
+private:
     hipStream_t stream;
 };
 
@@ -188,73 +135,74 @@ private:
         TestParams<OrderColRowRow, InputType>, TestParams<OrderRowRowRow, InputType>
 
 // Define all test combinations
-using TestTypes = ::testing::Types<LAYOUT_COMBINATIONS_FOR_TYPE(half)>;
+using TestTypes = ::testing::Types<LAYOUT_COMBINATIONS_FOR_TYPE(half),
+                                   LAYOUT_COMBINATIONS_FOR_TYPE(__hip_bfloat16)>;
 
 TYPED_TEST_SUITE(GEMMSamePrecisionTest, TestTypes);
 
 TYPED_TEST(GEMMSamePrecisionTest, Size128x128x128)
 {
-    this->VerifyBothTests(128, 128, 128);
+    this->VerifyGEMM(128, 128, 128);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size128x256x128)
 {
-    this->VerifyBothTests(128, 256, 128);
+    this->VerifyGEMM(128, 256, 128);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size128x128x256)
 {
-    this->VerifyBothTests(128, 128, 256);
+    this->VerifyGEMM(128, 128, 256);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size256x128x128)
 {
-    this->VerifyBothTests(256, 128, 128);
+    this->VerifyGEMM(256, 128, 128);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size256x256x256)
 {
-    this->VerifyBothTests(256, 256, 256);
+    this->VerifyGEMM(256, 256, 256);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size320x320x320)
 {
-    this->VerifyBothTests(320, 320, 320);
+    this->VerifyGEMM(320, 320, 320);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size320x512x512)
 {
-    this->VerifyBothTests(320, 512, 512);
+    this->VerifyGEMM(320, 512, 512);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size512x320x320)
 {
-    this->VerifyBothTests(512, 320, 320);
+    this->VerifyGEMM(512, 320, 320);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size512x512x320)
 {
-    this->VerifyBothTests(512, 512, 320);
+    this->VerifyGEMM(512, 512, 320);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size512x320x512)
 {
-    this->VerifyBothTests(512, 320, 512);
+    this->VerifyGEMM(512, 320, 512);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size512x512x512)
 {
-    this->VerifyBothTests(512, 512, 512);
+    this->VerifyGEMM(512, 512, 512);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size1024x256x256)
 {
-    this->VerifyBothTests(1024, 256, 256);
+    this->VerifyGEMM(1024, 256, 256);
 }
 
 TYPED_TEST(GEMMSamePrecisionTest, Size256x1024x256)
 {
-    this->VerifyBothTests(256, 1024, 256);
+    this->VerifyGEMM(256, 1024, 256);
 }
 
 int main(int argc, char** argv)

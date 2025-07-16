@@ -177,9 +177,10 @@ __host__ void
         size_t,                                                                               \
         hipStream_t&);
 
-// Declare the type combinations you want
 DECLARE_GEMM_FOR_TYPES(half, half)
 DECLARE_GEMM_FOR_TYPES(float, half)
+DECLARE_GEMM_FOR_TYPES(__hip_bfloat16, __hip_bfloat16)
+DECLARE_GEMM_FOR_TYPES(float, __hip_bfloat16)
 
 } // namespace rocm_wmma_gemm
 

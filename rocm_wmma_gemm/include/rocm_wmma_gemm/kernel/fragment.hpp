@@ -40,6 +40,12 @@ struct type_selector<half>
     using type = _Float16;
 };
 
+template<>
+struct type_selector<__hip_bfloat16>
+{
+    using type = short;
+};
+
 template<class T, int TILE>
 class fragment
 {
@@ -75,7 +81,15 @@ public:
         // This operator handles the T type and also serves as fallback when type == T
         __device__ __forceinline__ proxy& operator=(const T& value)
         {
-            vec_ref[index] = static_cast<type>(value);
+            if constexpr(std::is_same<T, __hip_bfloat16>::value)
+            {
+                vec_ref[index] = __bfloat16_as_short(value);
+            }
+            else
+            {
+                vec_ref[index] = static_cast<type>(value);
+            }
+
             return *this;
         }
 
@@ -150,9 +164,16 @@ public:
         return _fragment;
     }
 
-    __device__ __forceinline__ type operator[](int i) const
+    __device__ __forceinline__ T operator[](int i) const
     {
-        return _fragment[i];
+        if constexpr(std::is_same<T, __hip_bfloat16>::value)
+        {
+            return __short_as_bfloat16(_fragment[i]);
+        }
+        else
+        {
+            return _fragment[i];
+        }
     }
 };
 
@@ -171,10 +192,11 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
 
     if constexpr(actual_load_width == 1)
     {
-        auto& tmp = frag.get();
-        for(int i = 0; i < TILE; ++i)
+        const T* tmp = reinterpret_cast<const T*>(data);
+        for(auto it = frag.begin(); it != frag.end(); ++it)
         {
-            tmp[i] = data[i];
+            *it = *tmp;
+            tmp++;
         }
     }
     else

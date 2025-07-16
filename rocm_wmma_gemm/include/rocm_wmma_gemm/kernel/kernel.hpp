@@ -198,8 +198,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         // Advance the global pointers for A and B tiles.
         A_tile_ptr += block_k * global_mult_A;
         B_tile_ptr += block_k * global_mult_B;
-        half* temp_a = current_a;
-        half* temp_b = current_b;
+        U* temp_a = current_a;
+        U* temp_b = current_b;
         current_a    = next_a;
         current_b    = next_b;
         next_a       = temp_a;

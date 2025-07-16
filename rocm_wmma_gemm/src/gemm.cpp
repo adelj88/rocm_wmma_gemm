@@ -181,5 +181,7 @@ __host__ void
 // Instantiate the types you want
 INSTANTIATE_GEMM_FOR_TYPES(half, half)
 INSTANTIATE_GEMM_FOR_TYPES(float, half)
+INSTANTIATE_GEMM_FOR_TYPES(__hip_bfloat16, __hip_bfloat16)
+INSTANTIATE_GEMM_FOR_TYPES(float, __hip_bfloat16)
 
 } // namespace rocm_wmma_gemm

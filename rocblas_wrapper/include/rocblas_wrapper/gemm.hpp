@@ -25,6 +25,7 @@
 #ifndef ROCBLAS_WRAPPER_GEMM_HPP
 #define ROCBLAS_WRAPPER_GEMM_HPP
 
+#include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
 #include <rocblas/rocblas.h>
 

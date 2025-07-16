@@ -109,7 +109,7 @@ protected:
         HIP_CHECK(hipDeviceSynchronize());
 
         // Copy the result back to host
-        HIP_CHECK(hipMemcpy(h_C.data(), d_C, M * N * sizeof(float), hipMemcpyDeviceToHost));
+        HIP_CHECK(hipMemcpy(h_C.data(), d_C, h_C.size() * sizeof(float), hipMemcpyDeviceToHost));
         HIP_CHECK(hipDeviceSynchronize());
 
         // Calculate reference result on CPU
@@ -146,7 +146,8 @@ private:
         TestParams<OrderColRowRow, InputType>, TestParams<OrderRowRowRow, InputType>
 
 // Define all test combinations
-using TestTypes = ::testing::Types<LAYOUT_COMBINATIONS_FOR_TYPE(half)>;
+using TestTypes = ::testing::Types<LAYOUT_COMBINATIONS_FOR_TYPE(half),
+                                   LAYOUT_COMBINATIONS_FOR_TYPE(__hip_bfloat16)>;
 
 TYPED_TEST_SUITE(GEMMFloatAccumTest, TestTypes);
 

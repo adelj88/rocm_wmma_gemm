@@ -25,6 +25,7 @@
 #ifndef ROCM_WMMA_GEMM_COMMON_HPP
 #define ROCM_WMMA_GEMM_COMMON_HPP
 
+#include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 

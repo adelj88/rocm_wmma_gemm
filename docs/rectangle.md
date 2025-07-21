@@ -2,6 +2,8 @@
 
 Performance measured on AMD Radeon RX 7900 GRE on WSL2 (Ubuntu 24.04.1 LTS, ROCm 6.4.1) in TFLOPs.
 
+## FP16-FP16 Performance Results
+
 | Matrix Size       | Input Layout (A,B) | `rocm_wmma_gemm`<br>(C=col) | `rocBLAS`<br>(C=col) | Ratio<br>(C=col / rocBLAS) | `rocm_wmma_gemm`<br>(C=row) | Ratio<br>(C=row / rocBLAS) |
 |:------------------|:-------------------|---------------------------:|--------------------:|--------------------------:|---------------------------:|--------------------------:|
 | 4096×4096×1024    | col, col           |                      60.94 |               66.21 |                      0.92 |                      62.63 |                      0.95 |

@@ -11,6 +11,7 @@ This repository aims to:
 - Provide a focused, high-performance GEMM kernel utilizing ROCm WMMA intrinsics.
 - Isolate and refine the fastest GEMM implementation derived from the `hgemm` sample in `rocm_wmma_samples`.
 - Explore and implement support for various matrix data layouts (e.g., row-major, column-major, potentially tiled formats) beyond the format used in the sample.
+- Support `FP16`, `BF16` and `float` accumulators
 - Tune the GEMM kernel for different M, N, K sizes
 
 ## Overview

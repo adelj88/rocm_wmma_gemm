@@ -123,11 +123,17 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     U* next_a    = a_tiles_1;
     U* next_b    = b_tiles_1;
 
-    const int global_mult_A = (LAYOUT_A == m_layout::col_major) ? M : 1;
-    const int global_mult_B = (LAYOUT_B == m_layout::col_major) ? 1 : N;
+    const int global_mult_A = block_k * ((LAYOUT_A == m_layout::col_major) ? M : 1);
+    const int global_mult_B = block_k * ((LAYOUT_B == m_layout::col_major) ? 1 : N);
 
     constexpr int frag_mult_A = (LAYOUT_A == m_layout::col_major) ? 1 : block_k;
     constexpr int frag_mult_B = (LAYOUT_B == m_layout::col_major) ? block_k : 1;
+
+    constexpr int frag_offset_A = wmma_tile * frag_mult_A;
+    constexpr int frag_offset_B = wmma_tile * frag_mult_B;
+
+    const int warp_offset_A = (warp_m_base + half_lane) * frag_mult_A;
+    const int warp_offset_B = (warp_n_base + half_lane) * frag_mult_B;
 
     // Main loop over k-dimension
     for(int k_tile = 0; k_tile < K; k_tile += block_k)
@@ -136,18 +142,18 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         {
             if(tid < half_block)
             {
-                const U* next_A = A_tile_ptr + block_k * global_mult_A;
+                const U* next_A = A_tile_ptr + global_mult_A;
                 load_to_shared<LAYOUT_A, half_block, block_m, block_k>(next_a, next_A, M, K, cid);
             }
             else
             {
-                const U* next_B = B_tile_ptr + block_k * global_mult_B;
+                const U* next_B = B_tile_ptr + global_mult_B;
                 load_to_shared<LAYOUT_B, half_block, block_k, block_n>(next_b, next_B, K, N, cid);
             }
         }
 
-        const U* curr_a = current_a + (warp_m_base + half_lane) * frag_mult_A;
-        const U* curr_b = current_b + (warp_n_base + half_lane) * frag_mult_B;
+        const U* curr_a = current_a + warp_offset_A;
+        const U* curr_b = current_b + warp_offset_B;
 
         if constexpr(warp_tile_m < warp_tile_n)
         {
@@ -156,10 +162,10 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                 if(wm < warp_tile_m)
                 {
                     load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], curr_a, block_m, block_k);
-                    curr_a += wmma_tile * frag_mult_A;
+                    curr_a += frag_offset_A;
                 }
                 load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, block_k, block_n);
-                curr_b += wmma_tile * frag_mult_B;
+                curr_b += frag_offset_B;
             }
         }
         else if constexpr(warp_tile_m > warp_tile_n)
@@ -170,9 +176,9 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                 if(wm < warp_tile_n)
                 {
                     load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, block_k, block_n);
-                    curr_b += wmma_tile * frag_mult_B;
+                    curr_b += frag_offset_B;
                 }
-                curr_a += wmma_tile * frag_mult_A;
+                curr_a += frag_offset_A;
             }
         }
         else if constexpr(warp_tile_m == warp_tile_n)
@@ -181,8 +187,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
             {
                 load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], curr_a, block_m, block_k);
                 load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, block_k, block_n);
-                curr_a += wmma_tile * frag_mult_A;
-                curr_b += wmma_tile * frag_mult_B;
+                curr_a += frag_offset_A;
+                curr_b += frag_offset_B;
             }
         }
 
@@ -196,14 +202,14 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         }
 
         // Advance the global pointers for A and B tiles.
-        A_tile_ptr += block_k * global_mult_A;
-        B_tile_ptr += block_k * global_mult_B;
+        A_tile_ptr += global_mult_A;
+        B_tile_ptr += global_mult_B;
         U* temp_a = current_a;
         U* temp_b = current_b;
-        current_a    = next_a;
-        current_b    = next_b;
-        next_a       = temp_a;
-        next_b       = temp_b;
+        current_a = next_a;
+        current_b = next_b;
+        next_a    = temp_a;
+        next_b    = temp_b;
         __syncthreads();
     }
 

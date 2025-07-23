@@ -35,10 +35,11 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     constexpr int max_load_width    = 8;
     constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes   = min_block_dim * sizeof(T);
-    constexpr int actual_load_width = (min_block_bytes >= 32)   ? max_load_width
-                                      : (min_block_bytes >= 16) ? 4
-                                      : (min_block_bytes >= 8)  ? 2
-                                                                : 1;
+    constexpr int actual_load_width = (min_block_bytes % (max_load_width * sizeof(T)) == 0)
+                                          ? max_load_width
+                                      : (min_block_bytes % (4 * sizeof(T)) == 0) ? 4
+                                      : (min_block_bytes % (2 * sizeof(T)) == 0) ? 2
+                                                                                 : 1;
 
     using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
@@ -68,10 +69,11 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     constexpr int max_load_width    = 8;
     constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes   = min_block_dim * sizeof(T);
-    constexpr int actual_load_width = (min_block_bytes >= 32)   ? max_load_width
-                                      : (min_block_bytes >= 16) ? 4
-                                      : (min_block_bytes >= 8)  ? 2
-                                                                : 1;
+    constexpr int actual_load_width = (min_block_bytes % (max_load_width * sizeof(T)) == 0)
+                                          ? max_load_width
+                                      : (min_block_bytes % (4 * sizeof(T)) == 0) ? 4
+                                      : (min_block_bytes % (2 * sizeof(T)) == 0) ? 2
+                                                                                 : 1;
 
     using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
@@ -99,9 +101,17 @@ __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
-    using vector_type          = float __attribute__((ext_vector_type(4)));
-    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int max_load_width    = 8;
+    constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
+    constexpr int min_block_bytes   = min_block_dim * sizeof(T);
+    constexpr int actual_load_width = (min_block_bytes % (max_load_width * sizeof(T)) == 0)
+                                          ? max_load_width
+                                      : (min_block_bytes % (4 * sizeof(T)) == 0) ? 4
+                                      : (min_block_bytes % (2 * sizeof(T)) == 0) ? 2
+                                                                                 : 1;
 
+    using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
@@ -144,9 +154,17 @@ __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
-    using vector_type          = float __attribute__((ext_vector_type(4)));
-    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+    constexpr int max_load_width    = 8;
+    constexpr int min_block_dim     = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
+    constexpr int min_block_bytes   = min_block_dim * sizeof(T);
+    constexpr int actual_load_width = (min_block_bytes % (max_load_width * sizeof(T)) == 0)
+                                          ? max_load_width
+                                      : (min_block_bytes % (4 * sizeof(T)) == 0) ? 4
+                                      : (min_block_bytes % (2 * sizeof(T)) == 0) ? 2
+                                                                                 : 1;
 
+    using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
+    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
     constexpr int vectors_per_thread
         = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 

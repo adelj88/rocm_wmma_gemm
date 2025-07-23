@@ -11,10 +11,10 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 2,
-                "warps_n": 4,
+                "warps_m": 1,
+                "warps_n": 2,
                 "warp_tile_m": 4,
-                "warp_tile_n": 2
+                "warp_tile_n": 4
             }
         },
         {
@@ -28,9 +28,9 @@
                 "B": "col_major"
             },
             "config": {
-                "warps_m": 4,
+                "warps_m": 2,
                 "warps_n": 4,
-                "warp_tile_m": 2,
+                "warp_tile_m": 4,
                 "warp_tile_n": 2
             }
         },
@@ -43,27 +43,27 @@
             "layout": {
                 "A": "col_major",
                 "B": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major"
             },
             "config": {
                 "warps_m": 2,
                 "warps_n": 1,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 2
             }
@@ -419,10 +419,10 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 1,
-                "warps_n": 2,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
             }
         },
         {
@@ -437,9 +437,9 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 2,
+                "warps_n": 4,
                 "warp_tile_m": 1,
-                "warp_tile_n": 4
+                "warp_tile_n": 2
             }
         },
         {
@@ -455,8 +455,8 @@
             "config": {
                 "warps_m": 2,
                 "warps_n": 4,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
             }
         },
         {
@@ -472,7 +472,7 @@
             "config": {
                 "warps_m": 2,
                 "warps_n": 2,
-                "warp_tile_m": 1,
+                "warp_tile_m": 2,
                 "warp_tile_n": 4
             }
         },
@@ -488,7 +488,7 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 2,
+                "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -504,9 +504,9 @@
                 "B": "col_major"
             },
             "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 2,
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
         },
@@ -692,7 +692,7 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 8,
+                "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -717,6 +717,74 @@
         {
             "range": {
                 "M": 2048,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
                 "N": 5120,
                 "K": 5120
             },
@@ -733,7 +801,7 @@
         },
         {
             "range": {
-                "M": 2048,
+                "M": 4096,
                 "N": 5120,
                 "K": 5120
             },
@@ -743,16 +811,16 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
         },
         {
             "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
             },
             "layout": {
                 "A": "row_major",
@@ -767,9 +835,77 @@
         },
         {
             "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 65536,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 65536,
+                "N": 2048,
+                "K": 2048
             },
             "layout": {
                 "A": "row_major",
@@ -784,9 +920,9 @@
         },
         {
             "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
+                "M": 65536,
+                "N": 2048,
+                "K": 2048
             },
             "layout": {
                 "A": "col_major",
@@ -801,77 +937,9 @@
         },
         {
             "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
+                "M": 65536,
+                "N": 2048,
+                "K": 2048
             },
             "layout": {
                 "A": "col_major",
@@ -879,74 +947,6 @@
             },
             "config": {
                 "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 65536,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 65536,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 65536,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 65536,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
                 "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4

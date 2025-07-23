@@ -185,10 +185,11 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
 {
     constexpr int max_load_width    = 8;
     constexpr int tile_bytes        = TILE * sizeof(T);
-    constexpr int actual_load_width = (tile_bytes >= 32)   ? max_load_width
-                                      : (tile_bytes >= 16) ? 4
-                                      : (tile_bytes >= 8)  ? 2
-                                                           : 1;
+    constexpr int actual_load_width = (tile_bytes % (max_load_width * sizeof(T)) == 0)
+                                          ? max_load_width
+                                      : (tile_bytes % (4 * sizeof(T)) == 0) ? 4
+                                      : (tile_bytes % (2 * sizeof(T)) == 0) ? 2
+                                                                            : 1;
 
     if constexpr(actual_load_width == 1)
     {

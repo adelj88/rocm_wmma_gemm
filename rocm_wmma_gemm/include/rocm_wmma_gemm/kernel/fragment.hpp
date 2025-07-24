@@ -177,6 +177,8 @@ public:
     }
 };
 
+// TODO: Fix condition when min_block_bytes is smaller than sizeof(float); not important given
+// the kernel targets a specific tile_bytes that is always larger than sizeof(float)
 template<m_input MATRIX, m_layout ACCESS, class T, int TILE>
 __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* data, int M, int N) ->
     typename std::enable_if<(MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major)
@@ -185,11 +187,11 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
 {
     constexpr int max_load_width    = 8;
     constexpr int tile_bytes        = TILE * sizeof(T);
-    constexpr int actual_load_width = (tile_bytes % (max_load_width * sizeof(T)) == 0)
+    constexpr int actual_load_width = (tile_bytes % (max_load_width * sizeof(float)) == 0)
                                           ? max_load_width
-                                      : (tile_bytes % (4 * sizeof(T)) == 0) ? 4
-                                      : (tile_bytes % (2 * sizeof(T)) == 0) ? 2
-                                                                            : 1;
+                                      : (tile_bytes % (4 * sizeof(float)) == 0) ? 4
+                                      : (tile_bytes % (2 * sizeof(float)) == 0) ? 2
+                                                                                : 1;
 
     if constexpr(actual_load_width == 1)
     {

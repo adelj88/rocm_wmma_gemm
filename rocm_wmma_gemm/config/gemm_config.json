@@ -11,9 +11,9 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 1,
-                "warps_n": 2,
-                "warp_tile_m": 4,
+                "warps_m": 2,
+                "warps_n": 1,
+                "warp_tile_m": 2,
                 "warp_tile_n": 4
             }
         },
@@ -45,10 +45,10 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 4,
+                "warps_m": 1,
                 "warps_n": 2,
                 "warp_tile_m": 2,
-                "warp_tile_n": 4
+                "warp_tile_n": 2
             }
         },
         {
@@ -64,7 +64,7 @@
             "config": {
                 "warps_m": 2,
                 "warps_n": 1,
-                "warp_tile_m": 4,
+                "warp_tile_m": 2,
                 "warp_tile_n": 2
             }
         },
@@ -181,8 +181,8 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 4,
-                "warps_n": 2,
+                "warps_m": 2,
+                "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -300,8 +300,8 @@
                 "B": "col_major"
             },
             "config": {
-                "warps_m": 4,
-                "warps_n": 4,
+                "warps_m": 2,
+                "warps_n": 8,
                 "warp_tile_m": 4,
                 "warp_tile_n": 2
             }
@@ -402,7 +402,7 @@
                 "B": "col_major"
             },
             "config": {
-                "warps_m": 8,
+                "warps_m": 4,
                 "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
@@ -420,25 +420,25 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 1,
+                "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 2,
                 "warp_tile_n": 2
             }
         },
@@ -454,26 +454,26 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 2,
+                "warps_n": 1,
                 "warp_tile_m": 2,
                 "warp_tile_n": 4
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major"
+            },
+            "config": {
+                "warps_m": 1,
+                "warps_n": 4,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1
             }
         },
         {
@@ -488,7 +488,7 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -793,8 +793,8 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 4,
-                "warps_n": 2,
+                "warps_m": 2,
+                "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -861,8 +861,8 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 2,
-                "warps_n": 4,
+                "warps_m": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -879,7 +879,7 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -915,7 +915,7 @@
                 "warps_m": 4,
                 "warps_n": 4,
                 "warp_tile_m": 4,
-                "warp_tile_n": 2
+                "warp_tile_n": 4
             }
         },
         {
@@ -929,8 +929,8 @@
                 "B": "row_major"
             },
             "config": {
-                "warps_m": 2,
-                "warps_n": 4,
+                "warps_m": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4
             }
@@ -946,7 +946,7 @@
                 "B": "col_major"
             },
             "config": {
-                "warps_m": 8,
+                "warps_m": 4,
                 "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4

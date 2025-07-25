@@ -28,24 +28,6 @@
 namespace rocm_wmma_gemm
 {
 
-template<class T>
-struct type_selector
-{
-    using type = T;
-};
-
-template<>
-struct type_selector<half>
-{
-    using type = _Float16;
-};
-
-template<>
-struct type_selector<__hip_bfloat16>
-{
-    using type = short;
-};
-
 template<class T, int TILE>
 class fragment
 {
@@ -177,21 +159,20 @@ public:
     }
 };
 
-// TODO: Fix condition when min_block_bytes is smaller than sizeof(float); not important given
-// the kernel targets a specific tile_bytes that is always larger than sizeof(float)
 template<m_input MATRIX, m_layout ACCESS, class T, int TILE>
 __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* data, int M, int N) ->
     typename std::enable_if<(MATRIX == m_input::matrix_a && ACCESS == m_layout::row_major)
                                 || (MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major),
                             void>::type
 {
-    constexpr int max_load_width    = 8;
-    constexpr int tile_bytes        = TILE * sizeof(T);
-    constexpr int actual_load_width = (tile_bytes % (max_load_width * sizeof(float)) == 0)
-                                          ? max_load_width
-                                      : (tile_bytes % (4 * sizeof(float)) == 0) ? 4
-                                      : (tile_bytes % (2 * sizeof(float)) == 0) ? 2
-                                                                                : 1;
+    constexpr int tile_bytes = TILE * sizeof(T);
+
+    // Find largest power of 2 (in T units) that divides tile_bytes
+    constexpr int element_alignment = tile_bytes / sizeof(T); // This is just TILE
+    constexpr int calculated_width  = element_alignment & (-element_alignment);
+    constexpr int max_vector_width  = 32 / sizeof(T); // 32 bytes = 2 * 128-bit loads
+    constexpr int actual_load_width
+        = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
     if constexpr(actual_load_width == 1)
     {
@@ -204,7 +185,8 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     }
     else
     {
-        using vector_type          = float __attribute__((ext_vector_type(actual_load_width)));
+        using type                 = typename type_selector<T>::type;
+        using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
         constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
         constexpr int width        = (TILE + vector_width - 1) / vector_width;
 

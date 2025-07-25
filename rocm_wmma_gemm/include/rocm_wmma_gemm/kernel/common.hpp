@@ -48,6 +48,24 @@ enum class m_input
     matrix_b
 };
 
+template<class T>
+struct type_selector
+{
+    using type = T;
+};
+
+template<>
+struct type_selector<half>
+{
+    using type = _Float16;
+};
+
+template<>
+struct type_selector<__hip_bfloat16>
+{
+    using type = short;
+};
+
 constexpr int wmma_tile = 16;
 constexpr int warp_size = 32;
 

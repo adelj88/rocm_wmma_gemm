@@ -56,9 +56,15 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     const int grid_n  = (N + block_n - 1) / block_n;
     const int tile_id = blockIdx.x;
 
-    // Get block coordinates using hilbert mapping
+    constexpr bool use_row = (LAYOUT_A == m_layout::row_major && LAYOUT_B == m_layout::row_major);
+    constexpr bool use_col = (LAYOUT_A == m_layout::col_major && LAYOUT_B == m_layout::col_major);
+    constexpr bool use_hilbert = !use_row && !use_col;
+
+    using mapper = tile_mapper<block_m, block_n, LAYOUT_A, LAYOUT_B>;
+
+    // Get block coordinates
     int block_row, block_col;
-    hilbert_tile_mapping<block_m, block_n>(tile_id, grid_m, grid_n, &block_row, &block_col);
+    mapper().map_tile(tile_id, grid_m, grid_n, &block_row, &block_col);
 
     // Allocate a unified shared memory buffer.
     __shared__ U lds_mem[2 * lds_size];

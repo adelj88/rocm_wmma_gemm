@@ -15,19 +15,27 @@ template<m_layout layout_C, m_layout layout_A, m_layout layout_B, class T, class
 __host__ void
     gemm(T* C, U* A, U* B, size_t M, size_t N, size_t K, size_t batch_count, hipStream_t& stream)
 {
-    auto params = get_gemm_params(M, N, K, layout_C, layout_A, layout_B);
+    // Find the best config index for this problem size and layout
+    size_t config_idx = detail::find_best_config(M, N, K, layout_A, layout_B, layout_C);
 
-    int block_m = params.warps_m * params.warp_tile_m * wmma_tile;
-    int block_n = params.warps_n * params.warp_tile_n * wmma_tile;
+    // Get the params for grid/block calculation
+    const auto& config      = detail::kernel_configs[config_idx];
+    int         warps_m     = std::get<0>(config);
+    int         warps_n     = std::get<1>(config);
+    int         warp_tile_m = std::get<2>(config);
+    int         warp_tile_n = std::get<3>(config);
+
+    int block_m = warps_m * warp_tile_m * wmma_tile;
+    int block_n = warps_n * warp_tile_n * wmma_tile;
 
     int grid_m       = (M + block_m - 1) / block_m;
     int grid_n       = (N + block_n - 1) / block_n;
     int total_blocks = grid_m * grid_n;
 
     dim3 grid_dim(total_blocks, batch_count);
-    dim3 block_dim(warp_size * params.warps_m * params.warps_n);
+    dim3 block_dim(warp_size * warps_m * warps_n);
 
-    kernel_launcher<T, U, layout_C, layout_A, layout_B>::launch(params,
+    kernel_launcher<T, U, layout_C, layout_A, layout_B>::launch(config_idx,
                                                                 C,
                                                                 A,
                                                                 B,

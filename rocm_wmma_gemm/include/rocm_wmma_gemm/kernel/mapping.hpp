@@ -222,6 +222,13 @@ struct select_tile_mapping_impl<m_layout::row_major, m_layout::row_major>
     using type = row_major_mapping<BLOCK_M, BLOCK_N>;
 };
 
+template<>
+struct select_tile_mapping_impl<m_layout::col_major, m_layout::col_major>
+{
+    template<int BLOCK_M, int BLOCK_N>
+    using type = col_major_mapping<BLOCK_M, BLOCK_N>;
+};
+
 template<int BLOCK_M, int BLOCK_N, m_layout LAYOUT_A, m_layout LAYOUT_B>
 class tile_mapper
 {

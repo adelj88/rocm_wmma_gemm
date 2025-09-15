@@ -42,12 +42,14 @@ template<class T,
          int      warps_m,
          int      warps_n,
          int      warp_tile_m,
-         int      warp_tile_n>
+         int      warp_tile_n,
+         int      bits,
+         bool     use_direct_write>
 __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
     T* C, const U* A, const U* B, int M, int N, int K)
 {
-    constexpr int block_m  = warps_m * warp_tile_m * wmma_tile; // 4*4*16 = 256
-    constexpr int block_n  = warps_n * warp_tile_n * wmma_tile; // 4*4*16 = 256
+    constexpr int block_m  = warps_m * warp_tile_m * wmma_tile; // 4*4*16 = bits
+    constexpr int block_n  = warps_n * warp_tile_n * wmma_tile; // 4*4*16 = bits
     constexpr int block_k  = wmma_tile;
     constexpr int lds_size = (block_m * block_k) + (block_k * block_n);
 
@@ -116,11 +118,19 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
 
     if(tid < half_block)
     {
-        load_to_shared<LAYOUT_A, half_block, block_m, block_k>(a_tiles_0, A_tile_ptr, M, K, cid);
+        load_to_shared<LAYOUT_A, bits, half_block, block_m, block_k>(a_tiles_0,
+                                                                     A_tile_ptr,
+                                                                     M,
+                                                                     K,
+                                                                     cid);
     }
     else
     {
-        load_to_shared<LAYOUT_B, half_block, block_k, block_n>(b_tiles_0, B_tile_ptr, K, N, cid);
+        load_to_shared<LAYOUT_B, bits, half_block, block_k, block_n>(b_tiles_0,
+                                                                     B_tile_ptr,
+                                                                     K,
+                                                                     N,
+                                                                     cid);
     }
     __syncthreads();
 
@@ -149,12 +159,20 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
             if(tid < half_block)
             {
                 const U* next_A = A_tile_ptr + global_mult_A;
-                load_to_shared<LAYOUT_A, half_block, block_m, block_k>(next_a, next_A, M, K, cid);
+                load_to_shared<LAYOUT_A, bits, half_block, block_m, block_k>(next_a,
+                                                                             next_A,
+                                                                             M,
+                                                                             K,
+                                                                             cid);
             }
             else
             {
                 const U* next_B = B_tile_ptr + global_mult_B;
-                load_to_shared<LAYOUT_B, half_block, block_k, block_n>(next_b, next_B, K, N, cid);
+                load_to_shared<LAYOUT_B, bits, half_block, block_k, block_n>(next_b,
+                                                                             next_B,
+                                                                             K,
+                                                                             N,
+                                                                             cid);
             }
         }
 
@@ -219,42 +237,28 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         __syncthreads();
     }
 
-    // Calculate memory requirements
-    constexpr int  c_tile_elements        = block_m * block_n;
-    constexpr int  c_tile_bytes           = c_tile_elements * sizeof(T);
-    constexpr int  available_shared_bytes = 2 * lds_size * sizeof(U);
-    constexpr bool c_fits_in_shared       = c_tile_bytes <= available_shared_bytes;
-
-    if constexpr(c_fits_in_shared)
+    if constexpr(use_direct_write)
     {
-        T* c_tile = reinterpret_cast<T*>(lds_mem);
-
+        // Direct write to global memory
         for(int wm = 0; wm < warp_tile_m; ++wm)
         {
-            const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
+            const int global_row = block_row + warp_m_base + wm * wmma_tile + half_warp_id;
+
             for(int wn = 0; wn < warp_tile_n; ++wn)
             {
-                const int local_col = warp_n_base + wn * wmma_tile + half_lane;
-                store_matrix<LAYOUT_C, true>(c_tile,
-                                             c_frags[wm][wn],
-                                             local_row,
-                                             local_col,
-                                             block_m,
-                                             block_n);
+                const int global_col = block_col + warp_n_base + wn * wmma_tile + half_lane;
+
+                store_matrix<LAYOUT_C, false>(C, c_frags[wm][wn], global_row, global_col, M, N);
             }
         }
-        __syncthreads();
-
-        load_shared_to_global<LAYOUT_C, full_block, block_m, block_n>(C,
-                                                                      c_tile,
-                                                                      block_row,
-                                                                      block_col,
-                                                                      M,
-                                                                      N,
-                                                                      tid);
     }
     else
     {
+        // Calculate memory requirements
+        constexpr int c_tile_elements        = block_m * block_n;
+        constexpr int c_tile_bytes           = c_tile_elements * sizeof(T);
+        constexpr int available_shared_bytes = 2 * lds_size * sizeof(U);
+
         // Complex case: C tile doesn't fit, need chunking
         constexpr bool is_col_major   = (LAYOUT_C == m_layout::col_major);
         constexpr int  chunk_elements = available_shared_bytes / sizeof(T);
@@ -264,87 +268,61 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
             // Chunk by columns - align to wmma_tile boundaries
             constexpr int raw_cols_per_chunk = chunk_elements / block_m;
             constexpr int cols_per_chunk     = (raw_cols_per_chunk / wmma_tile) * wmma_tile;
-
-            constexpr int num_chunks      = (block_n + cols_per_chunk - 1) / cols_per_chunk;
-            constexpr int last_chunk_cols = block_n - (num_chunks - 1) * cols_per_chunk;
+            constexpr int num_chunks         = (block_n + cols_per_chunk - 1) / cols_per_chunk;
+            constexpr int last_chunk_cols    = block_n - ((num_chunks - 1) * cols_per_chunk);
 
             for(int chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
             {
-                const int  col_start     = chunk_idx * cols_per_chunk;
-                const bool is_last_chunk = (chunk_idx == num_chunks - 1);
+                const int col_start = chunk_idx * cols_per_chunk;
 
                 T* c_chunk = reinterpret_cast<T*>(lds_mem);
 
-                // Always write ALL fragments to shared memory
-                // But use chunk coordinates for shared memory layout
+                // Store fragments to shared memory
                 for(int wm = 0; wm < warp_tile_m; ++wm)
                 {
                     const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
+
                     for(int wn = 0; wn < warp_tile_n; ++wn)
                     {
-                        const int warp_col_start = warp_n_base + wn * wmma_tile;
-                        const int local_col      = warp_col_start + half_lane;
+                        const int local_col = warp_n_base + wn * wmma_tile + half_lane;
 
-                        // Only store if this fragment's column range intersects with current chunk
-                        if(local_col >= col_start
-                           && local_col
-                                  < col_start + (is_last_chunk ? last_chunk_cols : cols_per_chunk))
+                        // Only store if this fragment intersects with current chunk
+                        const int chunk_cols
+                            = (chunk_idx == num_chunks - 1) ? last_chunk_cols : cols_per_chunk;
+                        if(local_col >= col_start && local_col < col_start + chunk_cols)
                         {
                             const int chunk_col = local_col - col_start;
-
-                            // Always store the full fragment, just adjust the shared memory coordinates
-                            if constexpr(last_chunk_cols == cols_per_chunk)
-                            {
-                                store_matrix<LAYOUT_C, true>(c_chunk,
-                                                             c_frags[wm][wn],
-                                                             local_row,
-                                                             chunk_col,
-                                                             block_m,
-                                                             cols_per_chunk);
-                            }
-                            else
-                            {
-                                if(is_last_chunk)
-                                {
-                                    store_matrix<LAYOUT_C, true>(c_chunk,
-                                                                 c_frags[wm][wn],
-                                                                 local_row,
-                                                                 chunk_col,
-                                                                 block_m,
-                                                                 last_chunk_cols);
-                                }
-                                else
-                                {
-                                    store_matrix<LAYOUT_C, true>(c_chunk,
-                                                                 c_frags[wm][wn],
-                                                                 local_row,
-                                                                 chunk_col,
-                                                                 block_m,
-                                                                 cols_per_chunk);
-                                }
-                            }
+                            store_matrix<LAYOUT_C, true>(c_chunk,
+                                                         c_frags[wm][wn],
+                                                         local_row,
+                                                         chunk_col,
+                                                         block_m,
+                                                         chunk_cols);
                         }
                     }
                 }
                 __syncthreads();
 
-                // Copy this chunk from shared to global memory
-                if constexpr(last_chunk_cols == cols_per_chunk)
+                // Copy chunk to global memory - compile-time dispatch
+                if constexpr(num_chunks == 1)
                 {
-                    load_shared_to_global<LAYOUT_C, full_block, block_m, cols_per_chunk>(
+                    // Only one chunk - use actual size
+                    load_shared_to_global<LAYOUT_C, bits, full_block, block_m, last_chunk_cols>(
                         C,
                         c_chunk,
                         block_row,
-                        block_col + col_start,
+                        block_col,
                         M,
                         N,
                         tid);
                 }
                 else
                 {
-                    if(is_last_chunk)
+                    // Multiple chunks - dispatch based on chunk index
+                    if(chunk_idx < num_chunks - 1)
                     {
-                        load_shared_to_global<LAYOUT_C, full_block, block_m, last_chunk_cols>(
+                        // Regular chunk
+                        load_shared_to_global<LAYOUT_C, bits, full_block, block_m, cols_per_chunk>(
                             C,
                             c_chunk,
                             block_row,
@@ -355,7 +333,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                     }
                     else
                     {
-                        load_shared_to_global<LAYOUT_C, full_block, block_m, cols_per_chunk>(
+                        // Last chunk with different size
+                        load_shared_to_global<LAYOUT_C, bits, full_block, block_m, last_chunk_cols>(
                             C,
                             c_chunk,
                             block_row,
@@ -368,81 +347,54 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                 __syncthreads();
             }
         }
-        else
+        else // row_major
         {
             // Chunk by rows - align to wmma_tile boundaries
             constexpr int raw_rows_per_chunk = chunk_elements / block_n;
             constexpr int rows_per_chunk     = (raw_rows_per_chunk / wmma_tile) * wmma_tile;
             constexpr int num_chunks         = (block_m + rows_per_chunk - 1) / rows_per_chunk;
-            constexpr int last_chunk_rows    = block_m - (num_chunks - 1) * rows_per_chunk;
+            constexpr int last_chunk_rows    = block_m - ((num_chunks - 1) * rows_per_chunk);
 
             for(int chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
             {
-                const int  row_start     = chunk_idx * rows_per_chunk;
-                const bool is_last_chunk = (chunk_idx == num_chunks - 1);
+                const int row_start = chunk_idx * rows_per_chunk;
 
                 T* c_chunk = reinterpret_cast<T*>(lds_mem);
 
-                // Always write ALL fragments to shared memory
-                // But use chunk coordinates for shared memory layout
+                // Store fragments to shared memory
                 for(int wm = 0; wm < warp_tile_m; ++wm)
                 {
-                    const int warp_row_start = warp_m_base + wm * wmma_tile;
-                    const int local_row      = warp_row_start + half_warp_id;
+                    const int local_row = warp_m_base + wm * wmma_tile + half_warp_id;
 
-                    // Only store if this fragment's row range intersects with current chunk
-                    if(local_row >= row_start
-                       && local_row
-                              < row_start + (is_last_chunk ? last_chunk_rows : rows_per_chunk))
+                    // Only store if this fragment intersects with current chunk
+                    const int chunk_rows
+                        = (chunk_idx == num_chunks - 1) ? last_chunk_rows : rows_per_chunk;
+                    if(local_row >= row_start && local_row < row_start + chunk_rows)
                     {
                         const int chunk_row = local_row - row_start;
+
                         for(int wn = 0; wn < warp_tile_n; ++wn)
                         {
                             const int local_col = warp_n_base + wn * wmma_tile + half_lane;
-
-                            // Always store the full fragment, just adjust the shared memory coordinates
-                            if constexpr(last_chunk_rows == rows_per_chunk)
-                            {
-                                store_matrix<LAYOUT_C, true>(c_chunk,
-                                                             c_frags[wm][wn],
-                                                             chunk_row,
-                                                             local_col,
-                                                             rows_per_chunk,
-                                                             block_n);
-                            }
-                            else
-                            {
-                                if(is_last_chunk)
-                                {
-                                    store_matrix<LAYOUT_C, true>(c_chunk,
-                                                                 c_frags[wm][wn],
-                                                                 chunk_row,
-                                                                 local_col,
-                                                                 last_chunk_rows,
-                                                                 block_n);
-                                }
-                                else
-                                {
-                                    store_matrix<LAYOUT_C, true>(c_chunk,
-                                                                 c_frags[wm][wn],
-                                                                 chunk_row,
-                                                                 local_col,
-                                                                 rows_per_chunk,
-                                                                 block_n);
-                                }
-                            }
+                            store_matrix<LAYOUT_C, true>(c_chunk,
+                                                         c_frags[wm][wn],
+                                                         chunk_row,
+                                                         local_col,
+                                                         chunk_rows,
+                                                         block_n);
                         }
                     }
                 }
                 __syncthreads();
 
-                // Copy this chunk from shared to global memory
-                if constexpr(last_chunk_rows == rows_per_chunk)
+                // Copy chunk to global memory - compile-time dispatch
+                if constexpr(num_chunks == 1)
                 {
-                    load_shared_to_global<LAYOUT_C, full_block, rows_per_chunk, block_n>(
+                    // Only one chunk - use actual size
+                    load_shared_to_global<LAYOUT_C, bits, full_block, last_chunk_rows, block_n>(
                         C,
                         c_chunk,
-                        block_row + row_start,
+                        block_row,
                         block_col,
                         M,
                         N,
@@ -450,9 +402,11 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                 }
                 else
                 {
-                    if(is_last_chunk)
+                    // Multiple chunks - dispatch based on chunk index
+                    if(chunk_idx < num_chunks - 1)
                     {
-                        load_shared_to_global<LAYOUT_C, full_block, last_chunk_rows, block_n>(
+                        // Regular chunk
+                        load_shared_to_global<LAYOUT_C, bits, full_block, rows_per_chunk, block_n>(
                             C,
                             c_chunk,
                             block_row + row_start,
@@ -463,7 +417,8 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
                     }
                     else
                     {
-                        load_shared_to_global<LAYOUT_C, full_block, rows_per_chunk, block_n>(
+                        // Last chunk with different size
+                        load_shared_to_global<LAYOUT_C, bits, full_block, last_chunk_rows, block_n>(
                             C,
                             c_chunk,
                             block_row + row_start,

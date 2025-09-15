@@ -41,7 +41,7 @@ Testing on AMD 7900 GRE reveals distinct performance patterns for both square an
   - Python packages (can be installed with pip or conda)
     - ``numpy``
     - ``optuna``
-- AMD RDNA3/RDNA3.5/RDNA4 GPU (required for WMMA support)
+- AMD RDNA3/RDNA3.5 GPU (required for WMMA support)
 
 ### Build Steps
 1. Clone the repository:
@@ -114,7 +114,7 @@ python3 tune.py --gpu-arch gfx1103
 python3 tune.py --output my_config.json
 
 # Custom baseline configurations
-python3 tune.py --baselines 128,128,128,8,4,4,2,4,8 256,128,128,8,2,2,4,4,4
+python3 tune.py --baselines 4,4,4,4,256,0 2,2,4,4,128,1 8,2,2,2,64,0
 ```
 
 ## Performance Results
@@ -124,9 +124,11 @@ Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `
 - [View detailed rectangular matrix benchmarks](docs/rectangle.md)
 
 ## Future Plans
-1. Add batched implementation for half GEMM
-2. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
-3. Tuning for RDNA3.5 and RDNA4
+1. Experiment with SoA for fragment class
+2. Add batched unit tests
+3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
+4. Tuning for RDNA3.5
+5. Modify fragments to support RDNA4 WMMA
 
 ## License
 

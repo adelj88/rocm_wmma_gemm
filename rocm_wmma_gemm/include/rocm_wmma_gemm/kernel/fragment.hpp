@@ -165,39 +165,13 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
                                 || (MATRIX == m_input::matrix_b && ACCESS == m_layout::col_major),
                             void>::type
 {
-    constexpr int tile_bytes = TILE * sizeof(T);
+    using type        = typename type_selector<T>::type;
+    using vector_type = type __attribute__((ext_vector_type(TILE)));
 
-    // Find largest power of 2 (in T units) that divides tile_bytes
-    constexpr int element_alignment = tile_bytes / sizeof(T); // This is just TILE
-    constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_vector_width  = 32 / sizeof(T); // 32 bytes = 2 * 128-bit loads
-    constexpr int actual_load_width
-        = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
+    const vector_type* src_ptr  = reinterpret_cast<const vector_type*>(data);
+    vector_type*       dest_ptr = reinterpret_cast<vector_type*>(&frag.get());
 
-    if constexpr(actual_load_width == 1)
-    {
-        const T* tmp = reinterpret_cast<const T*>(data);
-        for(auto it = frag.begin(); it != frag.end(); ++it)
-        {
-            *it = *tmp;
-            tmp++;
-        }
-    }
-    else
-    {
-        using type                 = typename type_selector<T>::type;
-        using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
-        constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-        constexpr int width        = (TILE + vector_width - 1) / vector_width;
-
-        const vector_type* src_ptr  = reinterpret_cast<const vector_type*>(data);
-        vector_type*       dest_ptr = reinterpret_cast<vector_type*>(&frag.get());
-
-        for(int i = 0; i < width; ++i)
-        {
-            dest_ptr[i] = src_ptr[i];
-        }
-    }
+    *dest_ptr = *src_ptr;
 }
 
 template<m_input MATRIX, m_layout ACCESS, class T, int TILE>
@@ -205,7 +179,7 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_a && ACCESS == m_layout::col_major),
                             void>::type
 {
-    const T* tmp = reinterpret_cast<const T*>(data);
+    const T* tmp = data;
     for(auto it = frag.begin(); it != frag.end(); ++it)
     {
         *it = *tmp;
@@ -218,7 +192,7 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
     typename std::enable_if<(MATRIX == m_input::matrix_b && ACCESS == m_layout::row_major),
                             void>::type
 {
-    const T* tmp = reinterpret_cast<const T*>(data);
+    const T* tmp = data;
     for(auto it = frag.begin(); it != frag.end(); ++it)
     {
         *it = *tmp;

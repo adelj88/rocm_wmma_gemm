@@ -28,7 +28,7 @@
 namespace rocm_wmma_gemm
 {
 
-template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
@@ -38,7 +38,8 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     // Find largest power of 2 (in T units) that divides min_block_bytes
     constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
     constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_vector_width  = 32 / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_bytes         = MAX_BITS / 8;
+    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
@@ -64,7 +65,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
-template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
@@ -74,7 +75,8 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     // Find largest power of 2 (in T units) that divides min_block_bytes
     constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
     constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_vector_width  = 32 / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_bytes         = MAX_BITS / 8;
+    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
@@ -100,7 +102,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
-template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
@@ -111,7 +113,8 @@ __device__ __forceinline__ auto
     // Find largest power of 2 (in T units) that divides min_block_bytes
     constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
     constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_vector_width  = 32 / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_bytes         = MAX_BITS / 8;
+    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
@@ -155,7 +158,7 @@ __device__ __forceinline__ auto
     }
 }
 
-template<m_layout ACCESS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
@@ -166,7 +169,8 @@ __device__ __forceinline__ auto
     // Find largest power of 2 (in T units) that divides min_block_bytes
     constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
     constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_vector_width  = 32 / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_bytes         = MAX_BITS / 8;
+    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 

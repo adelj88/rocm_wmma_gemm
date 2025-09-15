@@ -164,6 +164,8 @@ struct config_params
     int         warps_n;
     int         warp_tile_m;
     int         warp_tile_n;
+    int         bits;
+    bool        use_direct_write;
     int         layout_a; // 0=row_major, 1=col_major
     int         layout_b; // 0=row_major, 1=col_major
     int         layout_c; // 0=row_major, 1=col_major
@@ -183,34 +185,21 @@ std::string generate_kernel_source(const config_params& config)
 
     // Include the existing headers
     kernel_source << R"(
-// Define missing std functions for hipRTC
-namespace std
-{
-    template<class T>
-    __device__ __host__ constexpr const T& min(const T& a, const T& b)
-    {
-        return (b < a) ? b : a;
-    }
-
-    template<class T>
-    __device__ __host__ constexpr const T& max(const T& a, const T& b)
-    {
-        return (a < b) ? b : a;
-    }
-}
-
 #include <kernel/kernel.hpp>
 
 namespace rocm_wmma_gemm
 {
 
 // Extern template declaration - this IS the kernel we'll call
-template __global__ void kernel_gemm<half, half, )"
+template __global__ __launch_bounds__()"
+                  << (rocm_wmma_gemm::warp_size * config.warps_m * config.warps_n)
+                  << R"() void kernel_gemm<half, half, )"
                   << (config.layout_c == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
-                  << config.warp_tile_n << R"(>(
+                  << config.warp_tile_n << ", " << config.bits << ", "
+                  << (config.use_direct_write ? "true" : "false") << R"(>(
     half* C, const half* A, const half* B, int M, int N, int K);
 
 } // namespace rocm_wmma_gemm
@@ -310,7 +299,8 @@ bool compile_kernel(const config_params& config)
                    << (config.layout_b == 0 ? "rocm_wmma_gemm::m_layout::row_major"
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
-                   << ", " << config.warp_tile_n << ">";
+                   << ", " << config.warp_tile_n << ", " << config.bits << ", "
+                   << (config.use_direct_write ? "true" : "false") << ">";
 
     std::string kernel_name = kernel_name_ss.str();
     std::cout << "Adding name expression: " << kernel_name << std::endl;
@@ -320,7 +310,7 @@ bool compile_kernel(const config_params& config)
 
     // Set compilation options
     std::vector<const char*> options
-        = {"-O3", "-ffast-math", "-mcumode", "-std=c++17", config.gpu_arch.c_str()};
+        = {"-O3", "-ffast-math", "-mcumode", "-std=c++20", config.gpu_arch.c_str()};
 
     // Compile the program
     hiprtcResult compile_result = hiprtcCompileProgram(prog, options.size(), options.data());
@@ -426,7 +416,9 @@ void run_kernel_benchmark(benchmark::State& state)
                                         nullptr));
         HIP_CHECK(hipPeekAtLastError());
     }
-    HIP_CHECK(hipStreamSynchronize(g_test_data->stream));
+    HIP_CHECK(hipDeviceSynchronize());
+
+    double min_time     = std::numeric_limits<double>::max();
 
     // Benchmark loop
     for(auto _ : state)
@@ -446,23 +438,28 @@ void run_kernel_benchmark(benchmark::State& state)
                                         nullptr));
         HIP_CHECK(hipPeekAtLastError());
 
-        float elapsed_time = timer.stop(g_test_data->stream);
-        HIP_CHECK(hipDeviceSynchronize());
+        double elapsed_time = timer.stop(g_test_data->stream);
 
         double seconds = elapsed_time / 1000.0;
         state.SetIterationTime(seconds);
+
+        min_time = std::min(min_time, elapsed_time);
     }
+    HIP_CHECK(hipDeviceSynchronize());
+
+    state.counters["min_time_ms"] = min_time;
 }
 
 int main(int argc, char* argv[])
 {
-    if(argc != 12)
+    if(argc != 14)
     {
-        std::cerr
-            << "Usage: " << argv[0]
-            << " M N K warps_m warps_n warp_tile_m warp_tile_n layout_a layout_b layout_c gpu_arch"
-            << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 0 1 0 gfx1100" << std::endl;
+        std::cerr << "Usage: " << argv[0]
+                  << " M N K warps_m warps_n warp_tile_m warp_tile_n bits use_direct_write "
+                     "layout_a layout_b layout_c gpu_arch"
+                  << std::endl;
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 256 0 0 1 0 gfx1100"
+                  << std::endl;
         return 1;
     }
 
@@ -471,15 +468,17 @@ int main(int argc, char* argv[])
     size_t N = std::atol(argv[2]);
     size_t K = std::atol(argv[3]);
 
-    g_config.warps_m     = std::atoi(argv[4]);
-    g_config.warps_n     = std::atoi(argv[5]);
-    g_config.warp_tile_m = std::atoi(argv[6]);
-    g_config.warp_tile_n = std::atoi(argv[7]);
-    g_config.layout_a    = std::atoi(argv[8]);
-    g_config.layout_b    = std::atoi(argv[9]);
-    g_config.layout_c    = std::atoi(argv[10]);
-    std::string tmp      = argv[11];
-    g_config.gpu_arch    = "--offload-arch=" + tmp;
+    g_config.warps_m          = std::atoi(argv[4]);
+    g_config.warps_n          = std::atoi(argv[5]);
+    g_config.warp_tile_m      = std::atoi(argv[6]);
+    g_config.warp_tile_n      = std::atoi(argv[7]);
+    g_config.bits             = std::atoi(argv[8]);
+    g_config.use_direct_write = (std::atoi(argv[9]) != 0);
+    g_config.layout_a         = std::atoi(argv[10]);
+    g_config.layout_b         = std::atoi(argv[11]);
+    g_config.layout_c         = std::atoi(argv[12]);
+    std::string tmp           = argv[13];
+    g_config.gpu_arch         = "--offload-arch=" + tmp;
 
     // Initialize test data
     g_test_data = std::make_unique<test_data>(M, N, K);
@@ -493,7 +492,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Successfully compiled kernel for config: " << g_config.warps_m << ","
               << g_config.warps_n << "," << g_config.warp_tile_m << "," << g_config.warp_tile_n
-              << "," << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
+              << "," << g_config.bits << "," << g_config.use_direct_write << ","
+              << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
               << std::endl;
 
     // Initialize benchmark

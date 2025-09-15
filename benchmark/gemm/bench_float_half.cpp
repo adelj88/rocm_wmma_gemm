@@ -68,7 +68,7 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
     gpu_timer timer;
 
     // Warmup only
-    for(int i = 0; i < 5; ++i)
+    for(int i = 0; i < 20; ++i)
     {
         rocm_wmma_gemm::gemm<static_cast<rocm_wmma_gemm::m_layout>(c_layout),
                              static_cast<rocm_wmma_gemm::m_layout>(a_layout),
@@ -124,7 +124,6 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
 
     state.SetBytesProcessed(state.iterations() * ((M * K) + (K * N) + (M * N)) * sizeof(half));
 
-    HIP_CHECK(hipDeviceSynchronize());
     // Free device memory and destroy stream
     HIP_CHECK(hipStreamDestroy(stream));
     HIP_CHECK(hipFree(d_A));
@@ -201,7 +200,7 @@ void print_usage(const char* program_name)
     std::cout << "  --batch_count <n>  Batch count (default: 1)\n";
     std::cout << "  --help             Show this help message\n";
     std::cout << "\nExamples:\n";
-    std::cout << "  " << program_name << " --shapes 512;1024;2048\n";
+    std::cout << "  " << program_name << " --shapes 512:1024:2048\n";
     std::cout << "  " << program_name
               << " --shapes 1024,2048,512:2048,1024,1024 --batch_count 4\n";
 }

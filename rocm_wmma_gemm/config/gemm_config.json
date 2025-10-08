@@ -133,11 +133,11 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 2,
+                "warps_n": 1,
                 "warp_tile_m": 2,
                 "warp_tile_n": 4,
                 "bits": 256,
-                "use_direct_write": true
+                "use_direct_write": false
             }
         },
         {
@@ -153,11 +153,11 @@
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 1,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 64,
-                "use_direct_write": true
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1,
+                "bits": 128,
+                "use_direct_write": false
             }
         },
         {
@@ -613,11 +613,11 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 64,
-                "use_direct_write": false
+                "bits": 256,
+                "use_direct_write": true
             }
         },
         {
@@ -777,7 +777,7 @@
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 256,
-                "use_direct_write": false
+                "use_direct_write": true
             }
         },
         {
@@ -933,10 +933,10 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 64,
+                "bits": 256,
                 "use_direct_write": false
             }
         },
@@ -1092,11 +1092,11 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
+                "warps_m": 1,
+                "warps_n": 8,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2,
+                "bits": 64,
                 "use_direct_write": false
             }
         },
@@ -1112,49 +1112,9 @@
                 "C": "col_major"
             },
             "config": {
-                "warps_m": 1,
+                "warps_m": 2,
                 "warps_n": 2,
                 "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 4096,
-                "K": 128
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 4096,
-                "K": 128
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 128,
                 "use_direct_write": false
@@ -1168,6 +1128,46 @@
             },
             "layout": {
                 "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 4096,
+                "K": 128
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 4096,
+                "K": 128
+            },
+            "layout": {
+                "A": "row_major",
                 "B": "col_major",
                 "C": "row_major"
             },
@@ -1252,7 +1252,7 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 4,
+                "warps_m": 1,
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
@@ -1892,12 +1892,12 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 4,
+                "warps_m": 8,
                 "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 256,
-                "use_direct_write": true
+                "use_direct_write": false
             }
         },
         {
@@ -2056,8 +2056,8 @@
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
+                "bits": 128,
+                "use_direct_write": true
             }
         },
         {
@@ -2212,11 +2212,11 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 4,
-                "warps_n": 4,
+                "warps_m": 8,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 64,
+                "bits": 128,
                 "use_direct_write": false
             }
         },
@@ -2236,7 +2236,7 @@
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 128,
+                "bits": 256,
                 "use_direct_write": false
             }
         }

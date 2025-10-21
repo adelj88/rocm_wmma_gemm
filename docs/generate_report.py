@@ -3,6 +3,9 @@
 import re
 import argparse
 import sys
+import subprocess
+import tempfile
+from pathlib import Path
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -11,27 +14,55 @@ import numpy as np
 class BenchmarkParser:
     """Parse Google Benchmark output and extract performance metrics."""
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self.results = []
+        self.debug = debug
+        # Regex pattern to match ANSI escape codes
+        self.ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+
+    def strip_ansi(self, text):
+        """Remove ANSI escape codes from text."""
+        return self.ansi_escape.sub('', text)
 
     def parse_line(self, line):
         """Parse a single benchmark result line."""
+        # Strip ANSI escape codes first
+        line = self.strip_ansi(line)
+
         # Example line:
-        # {A:m_layout::col_major,B:m_layout::col_major,C:m_layout::col_major,m:1024,n:1024,k:1024}/manual_time      0.131 ms        0.204 ms         5481    16.8283      44.7156Gi/s     3.78287    0.107316
+        # {A:m_layout::col_major,B:m_layout::col_major,C:m_layout::col_major,m:1024,n:1024,k:1024}/manual_time      0.207 ms        0.278 ms         3713    11.5848      56.6933Gi/s     24.7665     0.16149
 
         # Extract benchmark name
         match = re.match(r'\{A:m_layout::(\w+),B:m_layout::(\w+),C:m_layout::(\w+),m:(\d+),n:(\d+),k:(\d+)\}', line)
         if not match:
+            if self.debug and '{A:m_layout' in line:
+                print(f"Warning: Line contains pattern but didn't match regex:")
+                print(f"  {repr(line[:150])}")
             return None
 
         layout_a, layout_b, layout_c, m, n, k = match.groups()
 
-        # Extract avg_tflops
-        tflops_match = re.search(r'(\d+\.\d+)\s+[\d.]+Gi/s', line)
+        if self.debug:
+            print(f"Matched benchmark line: {layout_a}/{layout_b}/{layout_c} {m}x{n}x{k}")
+
+        # Extract avg_tflops - it's in the column before bytes_per_second (Gi/s)
+        # Pattern: iterations(whitespace)avg_tflops(whitespace)bytes_per_second
+        # The avg_tflops comes right before the Gi/s value
+        # Need to handle variable whitespace between columns
+        tflops_match = re.search(r'\s+(\d+(?:\.\d+)?)\s+[\d.]+Gi/s', line)
         if not tflops_match:
+            if self.debug:
+                print(f"Warning: Could not extract TFLOPS from line: {line}")
+                # Try to show what's near Gi/s
+                gis_pos = line.find('Gi/s')
+                if gis_pos > 0:
+                    print(f"  Near Gi/s: ...{line[max(0, gis_pos-50):gis_pos+10]}...")
             return None
 
         tflops = float(tflops_match.group(1))
+
+        if self.debug:
+            print(f"Parsed: {layout_a}/{layout_b}/{layout_c} {m}x{n}x{k} -> {tflops} TFLOPS")
 
         return {
             'layout_a': layout_a,
@@ -43,21 +74,102 @@ class BenchmarkParser:
             'tflops': tflops
         }
 
-    def parse_file(self, filename):
-        """Parse a benchmark output file."""
-        with open(filename, 'r') as f:
-            for line in f:
-                result = self.parse_line(line)
-                if result:
-                    self.results.append(result)
+    def parse_output(self, output):
+        """Parse benchmark output from string."""
+        if self.debug:
+            print(f"Parsing output ({len(output)} characters, {len(output.split(chr(10)))} lines)")
+
+        line_count = 0
+        for line in output.split('\n'):
+            line_count += 1
+            if self.debug and line_count <= 5:
+                # Show both original and stripped versions
+                stripped = self.strip_ansi(line)
+                print(f"Sample line {line_count} (original): {line[:100]}")
+                print(f"Sample line {line_count} (stripped): {stripped[:100]}")
+
+            result = self.parse_line(line)
+            if result:
+                self.results.append(result)
+
+        if self.debug:
+            print(f"Total lines processed: {line_count}, results found: {len(self.results)}")
+
         return self.results
+
+def run_benchmark(binary_path, shapes=None, batch_count=1, verbose=False):
+    """
+    Run a benchmark binary and return its output.
+
+    Args:
+        binary_path: Path to the benchmark binary
+        shapes: Colon-separated string of matrix shapes (e.g., "1024:2048:1024,2048,512")
+        batch_count: Batch count for benchmarks
+        verbose: Print benchmark output to console
+
+    Returns:
+        Benchmark output as string
+    """
+    if not Path(binary_path).exists():
+        raise FileNotFoundError(f"Benchmark binary not found: {binary_path}")
+
+    # Build command
+    cmd = [str(binary_path)]
+
+    if shapes:
+        cmd.extend(["--shapes", shapes])
+
+    if batch_count != 1:
+        cmd.extend(["--batch_count", str(batch_count)])
+
+    print(f"Running: {' '.join(cmd)}")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300  # 5 minute timeout
+        )
+
+        # Check return code manually
+        if result.returncode != 0:
+            print(f"Warning: Benchmark returned non-zero exit code: {result.returncode}")
+            print(f"stderr: {result.stderr}")
+            # Don't exit, try to parse output anyway
+
+        output = result.stdout
+
+        # Check if output is in stderr instead
+        if not output.strip() and result.stderr.strip():
+            if verbose:
+                print("Note: Output found in stderr, using that instead")
+            output = result.stderr
+
+        if verbose:
+            print(output)
+
+        if not output.strip():
+            print("Warning: Benchmark produced no output!")
+            print(f"stderr: {result.stderr}")
+            print(f"returncode: {result.returncode}")
+
+        return output
+
+    except subprocess.TimeoutExpired:
+        print(f"Error: Benchmark timed out after 300 seconds")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error running benchmark: {e}")
+        sys.exit(1)
 
 def format_matrix_size(m, n, k):
     """Format matrix size string (e.g., 1024x1024x1024 or 4096x2048x64)."""
     return f"{m}x{n}x{k}"
 
 def generate_markdown_table(wmma_results, rocblas_results, output_file, title, gpu_name, os_info, rocm_version):
-    """Generate a markdown table comparing WMMA and rocBLAS performance."""
+    """Generate a markdown table comparing rocm_wmma_gemm and rocBLAS performance."""
 
     # Organize results by size and layout
     wmma_data = defaultdict(lambda: defaultdict(dict))
@@ -189,9 +301,9 @@ def generate_performance_plots(wmma_results, rocblas_results, output_file, title
         wmma_row_perf = []
 
         for size in sizes:
-            rocblas_val = data[layout_key][size]['rocblas'].get('col_major', None)
-            wmma_col_val = data[layout_key][size]['wmma'].get('col_major', None)
-            wmma_row_val = data[layout_key][size]['wmma'].get('row_major', None)
+            rocblas_val = data[layout_key][size]['rocblas'].get('col_major')
+            wmma_col_val = data[layout_key][size]['wmma'].get('col_major')
+            wmma_row_val = data[layout_key][size]['wmma'].get('row_major')
 
             rocblas_perf.append(rocblas_val)
             wmma_col_perf.append(wmma_col_val)
@@ -206,11 +318,11 @@ def generate_performance_plots(wmma_results, rocblas_results, output_file, title
 
         if any(v is not None for v in wmma_col_perf):
             ax.plot(x_pos, wmma_col_perf, 's-', color='#3498db', linewidth=2,
-                   markersize=8, label='WMMA (col out)')
+                   markersize=8, label='rocm_wmma_gemm (col out)')
 
         if any(v is not None for v in wmma_row_perf):
             ax.plot(x_pos, wmma_row_perf, '^-', color='#e67e22', linewidth=2,
-                   markersize=8, label='WMMA (row out)')
+                   markersize=8, label='rocm_wmma_gemm (row out)')
 
         # Add improvement annotations for significant cases
         for i, size in enumerate(sizes):
@@ -247,80 +359,140 @@ def generate_performance_plots(wmma_results, rocblas_results, output_file, title
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate benchmark report from Google Benchmark output',
+        description='Generate WMMA GEMM benchmark report by running binaries',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-  python generate_report.py --wmma bench_half_half.txt --rocblas bench_rocblas.txt \\
+  # Run benchmarks with default shapes
+  python generate_report.py \\
+      --wmma-bin ./build/bench/bench_half_half \\
+      --rocblas-bin ./build/bench/bench_rocblas_half \\
       --gpu "AMD Radeon RX 7900 GRE" \\
       --os "Ubuntu 24.04.1 LTS" \\
       --rocm-version "6.4.1"
 
-  # Square matrices
-  python generate_report.py --wmma square_wmma.txt --rocblas square_rocblas.txt \\
-      --title "Square Matrix Performance Benchmarks" \\
-      --gpu "AMD Radeon RX 7900 GRE" \\
-      --os "Ubuntu 24.04.1 LTS" \\
-      --rocm-version "6.4.1" \\
-      --markdown-output square.md \\
-      --plot-output square_plot.png
+  # Custom square matrix shapes (colon-separated)
+  python generate_report.py \\
+      --wmma-bin ./build/bench/bench_half_half \\
+      --rocblas-bin ./build/bench/bench_rocblas_half \\
+      --shapes "512:1024:2048:4096" \\
+      --gpu "AMD Radeon RX 7900 GRE"
 
-  # Rectangular matrices
-  python generate_report.py --wmma rect_wmma.txt --rocblas rect_rocblas.txt \\
-      --title "Rectangular Matrix Performance Benchmarks" \\
-      --gpu "AMD Radeon RX 7900 GRE" \\
-      --os "Ubuntu 24.04.1 LTS" \\
-      --rocm-version "6.4.1" \\
-      --markdown-output rectangle.md \\
-      --plot-output rectangle_plot.png
+  # Mix of square and rectangular matrices (colon-separated)
+  python generate_report.py \\
+      --wmma-bin ./build/bench/bench_half_half \\
+      --rocblas-bin ./build/bench/bench_rocblas_half \\
+      --shapes "1024:2048:1024,2048,512:2048,1024,1024:4096,4096,2048" \\
+      --title "Mixed Matrix FP16 Performance" \\
+      --gpu "AMD Radeon RX 7900 GRE"
 
-  # Minimal info (only GPU)
-  python generate_report.py --wmma bench.txt --rocblas rocblas.txt \\
-      --gpu "AMD Radeon RX 6800 XT"
+  # Save benchmark outputs for later analysis
+  python generate_report.py \\
+      --wmma-bin ./build/bench/bench_half_half \\
+      --rocblas-bin ./build/bench/bench_rocblas_half \\
+      --shapes "1024:2048:4096:8192" \\
+      --save-outputs \\
+      --gpu "AMD Radeon RX 7900 GRE"
 
-  # Generate only markdown
-  python generate_report.py --wmma bench.txt --rocblas rocblas.txt \\
-      --gpu "AMD Radeon RX 7900 GRE" \\
-      --no-plot
+  # Batch count and verbose output
+  python generate_report.py \\
+      --wmma-bin ./build/bench/bench_half_half \\
+      --rocblas-bin ./build/bench/bench_rocblas_half \\
+      --batch-count 4 \\
+      --verbose \\
+      --gpu "AMD Radeon RX 7900 GRE"
         """)
 
-    parser.add_argument('--wmma', required=True,
-                       help='WMMA benchmark output file')
-    parser.add_argument('--rocblas', required=True,
-                       help='rocBLAS benchmark output file')
-    parser.add_argument('--title', default='Matrix Performance Benchmarks',
-                       help='Report title (default: Matrix Performance Benchmarks)')
+    # Input binaries
+    parser.add_argument('--wmma-bin', required=True,
+                       help='Path to rocm_wmma_gemm benchmark binary')
+    parser.add_argument('--rocblas-bin', required=True,
+                       help='Path to rocBLAS benchmark binary')
+
+    # Benchmark configuration
+    parser.add_argument('--shapes',
+                       help='Colon-separated list of matrix shapes (e.g., "1024:2048" or "1024:2048:1024,2048,512:4096,4096,2048")')
+    parser.add_argument('--batch-count', type=int, default=1,
+                       help='Batch count for benchmarks (default: 1)')
+
+    # Report configuration
+    parser.add_argument('--title', default='FP16-FP16 WMMA GEMM Performance Benchmarks',
+                       help='Report title (default: FP16-FP16 WMMA GEMM Performance Benchmarks)')
     parser.add_argument('--gpu', required=True,
                        help='GPU name (e.g., "AMD Radeon RX 7900 GRE")')
     parser.add_argument('--os',
                        help='Operating system (e.g., "Ubuntu 24.04.1 LTS")')
     parser.add_argument('--rocm-version',
                        help='ROCm version (e.g., "6.4.1")')
-    parser.add_argument('--markdown-output', default='performance.md',
-                       help='Output markdown file (default: performance.md)')
-    parser.add_argument('--plot-output', default='performance_plot.png',
-                       help='Output plot file (default: performance_plot.png)')
+
+    # Output configuration
+    parser.add_argument('--markdown-output', default='wmma_performance.md',
+                       help='Output markdown file (default: wmma_performance.md)')
+    parser.add_argument('--plot-output', default='wmma_performance_plot.png',
+                       help='Output plot file (default: wmma_performance_plot.png)')
+    parser.add_argument('--save-outputs', action='store_true',
+                       help='Save raw benchmark outputs to files')
+    parser.add_argument('--wmma-output-file', default='bench_wmma.txt',
+                       help='File to save rocm_wmma_gemm output (default: bench_wmma.txt)')
+    parser.add_argument('--rocblas-output-file', default='bench_rocblas.txt',
+                       help='File to save rocBLAS output (default: bench_rocblas.txt)')
+
     parser.add_argument('--no-markdown', action='store_true',
                        help='Skip markdown generation')
     parser.add_argument('--no-plot', action='store_true',
                        help='Skip plot generation')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Print benchmark output to console')
+    parser.add_argument('--debug', action='store_true',
+                       help='Print debug information for parsing')
 
     args = parser.parse_args()
 
-    # Parse benchmark files
-    print("Parsing WMMA benchmark results...")
-    wmma_parser = BenchmarkParser()
-    wmma_results = wmma_parser.parse_file(args.wmma)
-    print(f"Found {len(wmma_results)} WMMA benchmark results")
+    # Run benchmarks
+    print("\n" + "="*80)
+    print("Running rocm_wmma_gemm benchmark...")
+    print("="*80)
+    wmma_output = run_benchmark(
+        args.wmma_bin,
+        shapes=args.shapes,
+        batch_count=args.batch_count,
+        verbose=args.verbose
+    )
+
+    if args.save_outputs:
+        with open(args.wmma_output_file, 'w') as f:
+            f.write(wmma_output)
+        print(f"Saved rocm_wmma_gemm output to {args.wmma_output_file}")
+
+    print("\n" + "="*80)
+    print("Running rocBLAS benchmark...")
+    print("="*80)
+    rocblas_output = run_benchmark(
+        args.rocblas_bin,
+        shapes=args.shapes,
+        batch_count=args.batch_count,
+        verbose=args.verbose
+    )
+
+    if args.save_outputs:
+        with open(args.rocblas_output_file, 'w') as f:
+            f.write(rocblas_output)
+        print(f"Saved rocBLAS output to {args.rocblas_output_file}")
+
+    # Parse outputs
+    print("\nParsing rocm_wmma_gemm benchmark results...")
+    wmma_parser = BenchmarkParser(debug=args.debug)
+    wmma_results = wmma_parser.parse_output(wmma_output)
 
     print("Parsing rocBLAS benchmark results...")
-    rocblas_parser = BenchmarkParser()
-    rocblas_results = rocblas_parser.parse_file(args.rocblas)
+    rocblas_parser = BenchmarkParser(debug=args.debug)
+    rocblas_results = rocblas_parser.parse_output(rocblas_output)
+
+    print(f"Found {len(wmma_results)} rocm_wmma_gemm benchmark results")
     print(f"Found {len(rocblas_results)} rocBLAS benchmark results")
 
     if not wmma_results or not rocblas_results:
-        print("Error: No benchmark results found in input files")
+        print("Error: No benchmark results found")
         sys.exit(1)
 
     # Generate outputs
@@ -334,7 +506,9 @@ Examples:
         generate_performance_plots(wmma_results, rocblas_results, args.plot_output,
                                   args.title, args.gpu)
 
-    print("\nReport generation complete!")
+    print("\n" + "="*80)
+    print("Report generation complete!")
+    print("="*80)
 
 if __name__ == "__main__":
     main()

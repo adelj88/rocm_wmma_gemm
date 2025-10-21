@@ -141,10 +141,16 @@ class OptunaWMMATuner:
         lines = output.strip().split('\n')
         for line in lines:
             if 'dynamic_kernel/manual_time' in line:
-                # Look for min_time_ms in the same line
-                match = re.search(r'min_time_ms=([\d.]+)', line)
+                # Look for min_time_ms with optional suffix (k for kilo, M for mega)
+                match = re.search(r'min_time_ms=([\d.]+)([kM])?', line)
                 if match:
-                    return float(match.group(1))
+                    value = float(match.group(1))
+                    suffix = match.group(2)
+                    if suffix == 'k':
+                        value *= 1000
+                    elif suffix == 'M':
+                        value *= 1000000
+                    return value
         return None
 
     def _evaluate_config(self, M, N, K, layout_a, layout_b, layout_c, config):

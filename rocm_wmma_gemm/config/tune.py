@@ -59,7 +59,7 @@ class OptunaWMMATuner:
                 (4, 4, 1, 1, 64),
                 (2, 1, 2, 2, 256),
                 (2, 1, 2, 2, 128),
-                (2, 1, 2, 2, 64),
+
             ]
             # Add both direct write variants
             self.baselines = []
@@ -137,20 +137,20 @@ class OptunaWMMATuner:
         return True
 
     def _parse_benchmark_output(self, output):
-        """Parse benchmark output to extract minimum timing."""
+        """Parse benchmark output to extract timing (handles with/without repetitions)."""
         lines = output.strip().split('\n')
         for line in lines:
-            if 'dynamic_kernel/manual_time' in line:
-                # Look for min_time_ms with optional suffix (k for kilo, M for mega)
-                match = re.search(r'min_time_ms=([\d.]+)([kM])?', line)
+            # With repetitions: use mean
+            if 'manual_time_mean' in line and 'repeats:' in line:
+                match = re.search(r'(\d+\.?\d*)\s+ms', line)
                 if match:
-                    value = float(match.group(1))
-                    suffix = match.group(2)
-                    if suffix == 'k':
-                        value *= 1000
-                    elif suffix == 'M':
-                        value *= 1000000
-                    return value
+                    return float(match.group(1))
+            # Single run (with or without repeats:1)
+            elif 'dynamic_kernel' in line and 'manual_time' in line and '_mean' not in line:
+                match = re.search(r'(\d+\.?\d*)\s+ms', line)
+                if match:
+                    return float(match.group(1))
+
         return None
 
     def _evaluate_config(self, M, N, K, layout_a, layout_b, layout_c, config):

@@ -400,26 +400,6 @@ void run_kernel_benchmark(benchmark::State& state)
                     const_cast<int*>(reinterpret_cast<const int*>(&N)),
                     const_cast<int*>(reinterpret_cast<const int*>(&K))};
 
-    // Warmup
-    for(int i = 0; i < 5; ++i)
-    {
-        HIP_CHECK(hipModuleLaunchKernel(g_kernel_func,
-                                        grid_dim.x,
-                                        grid_dim.y,
-                                        grid_dim.z,
-                                        block_dim.x,
-                                        block_dim.y,
-                                        block_dim.z,
-                                        0,
-                                        g_test_data->stream,
-                                        args,
-                                        nullptr));
-        HIP_CHECK(hipPeekAtLastError());
-    }
-    HIP_CHECK(hipDeviceSynchronize());
-
-    double min_time     = std::numeric_limits<double>::max();
-
     // Benchmark loop
     for(auto _ : state)
     {
@@ -442,12 +422,8 @@ void run_kernel_benchmark(benchmark::State& state)
 
         double seconds = elapsed_time / 1000.0;
         state.SetIterationTime(seconds);
-
-        min_time = std::min(min_time, elapsed_time);
     }
     HIP_CHECK(hipDeviceSynchronize());
-
-    state.counters["min_time_ms"] = min_time;
 }
 
 int main(int argc, char* argv[])
@@ -502,7 +478,9 @@ int main(int argc, char* argv[])
     // Register the benchmark
     benchmark::RegisterBenchmark("dynamic_kernel", run_kernel_benchmark)
         ->UseManualTime()
-        ->Unit(benchmark::kMillisecond);
+        ->Unit(benchmark::kMillisecond)
+        ->Repetitions(1) // Repeat 5 times
+        ->ReportAggregatesOnly(true);
 
     // Run benchmark
     benchmark::RunSpecifiedBenchmarks();

@@ -80,22 +80,6 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
 
     rocblas_wrapper::init_rocblas();
 
-    // Warmup only
-    for(int i = 0; i < 20; ++i)
-    {
-        rocblas_wrapper::gemm<layout_selector<a_layout>::transpose,
-                              layout_selector<b_layout>::transpose>(d_C,
-                                                                    d_A,
-                                                                    d_B,
-                                                                    M,
-                                                                    N,
-                                                                    K,
-                                                                    batch_count,
-                                                                    stream);
-        HIP_CHECK(hipPeekAtLastError());
-    }
-    HIP_CHECK(hipDeviceSynchronize());
-
     double total_tflops = 0.0;
     double min_time     = std::numeric_limits<double>::max();
     double max_time     = 0.0;
@@ -214,8 +198,7 @@ void print_usage(const char* program_name)
     std::cout << "  --help             Show this help message\n";
     std::cout << "\nExamples:\n";
     std::cout << "  " << program_name << " --shapes 512:1024:2048\n";
-    std::cout << "  " << program_name
-              << " --shapes 1024,2048,512:2048,1024,1024 --batch_count 4\n";
+    std::cout << "  " << program_name << " --shapes 1024,2048,512:2048,1024,1024 --batch_count 4\n";
 }
 
 int main(int argc, char* argv[])

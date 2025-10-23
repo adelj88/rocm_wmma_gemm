@@ -12,128 +12,8 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 1,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 1,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 1,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 1,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 1024,
-                "N": 1024,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
                 "warps_m": 4,
-                "warps_n": 1,
+                "warps_n": 2,
                 "warp_tile_m": 2,
                 "warp_tile_n": 4,
                 "bits": 256,
@@ -147,874 +27,34 @@
                 "K": 1024
             },
             "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 2,
-                "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
                 "A": "row_major",
                 "B": "row_major",
                 "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 8,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 8,
-                "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 8,
-                "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 2048,
-                "K": 2048
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 8,
-                "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 8,
-                "warp_tile_m": 2,
-                "warp_tile_n": 1,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 1,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 8,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 8,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 8192
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 2,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 2,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 1,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 8,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 8192,
-                "N": 8192,
-                "K": 1024
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 1,
-                "warp_tile_m": 2,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 2,
-                "warp_tile_m": 2,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
             },
             "config": {
                 "warps_m": 1,
                 "warps_n": 4,
                 "warp_tile_m": 2,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
                 "warp_tile_n": 2,
                 "bits": 64,
                 "use_direct_write": false
@@ -1022,9 +62,9 @@
         },
         {
             "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
             },
             "layout": {
                 "A": "row_major",
@@ -1032,19 +72,19 @@
                 "C": "col_major"
             },
             "config": {
-                "warps_m": 2,
-                "warps_n": 1,
-                "warp_tile_m": 4,
-                "warp_tile_n": 2,
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 4,
                 "bits": 128,
                 "use_direct_write": false
             }
         },
         {
             "range": {
-                "M": 4096,
-                "N": 2048,
-                "K": 64
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
             },
             "layout": {
                 "A": "col_major",
@@ -1052,7 +92,47 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 1,
+                "warps_m": 2,
+                "warps_n": 1,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 1,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 2,
@@ -1062,9 +142,129 @@
         },
         {
             "range": {
-                "M": 4096,
+                "M": 1024,
+                "N": 1024,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
                 "N": 2048,
-                "K": 64
+                "K": 2048
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 1,
+                "warp_tile_n": 1,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 1,
+                "warp_tile_n": 1,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
             },
             "layout": {
                 "A": "col_major",
@@ -1073,8 +273,728 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 1,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 8,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 2048,
+                "K": 2048
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 8,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 8,
                 "warp_tile_m": 2,
+                "warp_tile_n": 1,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 8,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 8192
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 2,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 8,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 1,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 8192,
+                "N": 8192,
+                "K": 1024
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 2,
+                "warp_tile_m": 2,
+                "warp_tile_n": 2,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 1,
+                "warps_n": 2,
+                "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 128,
                 "use_direct_write": false
@@ -1087,15 +1007,35 @@
                 "K": 64
             },
             "layout": {
-                "A": "col_major",
+                "A": "row_major",
                 "B": "col_major",
                 "C": "row_major"
             },
             "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 1,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
                 "warps_m": 1,
-                "warps_n": 8,
-                "warp_tile_m": 2,
-                "warp_tile_n": 2,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 1,
                 "bits": 64,
                 "use_direct_write": false
             }
@@ -1108,15 +1048,75 @@
             },
             "layout": {
                 "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 1,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 1,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 2,
+                "warp_tile_m": 1,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 2048,
+                "K": 64
+            },
+            "layout": {
+                "A": "col_major",
                 "B": "col_major",
                 "C": "col_major"
             },
             "config": {
                 "warps_m": 2,
-                "warps_n": 2,
-                "warp_tile_m": 2,
-                "warp_tile_n": 4,
-                "bits": 128,
+                "warps_n": 1,
+                "warp_tile_m": 4,
+                "warp_tile_n": 2,
+                "bits": 256,
                 "use_direct_write": false
             }
         },
@@ -1232,11 +1232,11 @@
                 "C": "col_major"
             },
             "config": {
-                "warps_m": 4,
+                "warps_m": 2,
                 "warps_n": 2,
                 "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
+                "warp_tile_n": 2,
+                "bits": 128,
                 "use_direct_write": false
             }
         },
@@ -1337,7 +1337,7 @@
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 128,
-                "use_direct_write": false
+                "use_direct_write": true
             }
         },
         {
@@ -1356,6 +1356,166 @@
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 16384,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 16384,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 16384,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 8,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 16384,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 16384
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 16384
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 16384
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 8,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1,
+                "bits": 64,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 4096,
+                "K": 16384
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 8,
+                "warp_tile_m": 2,
+                "warp_tile_n": 1,
                 "bits": 64,
                 "use_direct_write": false
             }
@@ -1363,166 +1523,6 @@
         {
             "range": {
                 "M": 4096,
-                "N": 16384,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 16384,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 16384,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 16384,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": true
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 16384
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 16384
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 16384
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 4096,
-                "K": 16384
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
                 "N": 4096,
                 "K": 16384
             },
@@ -1655,87 +1655,7 @@
                 "warps_m": 4,
                 "warps_n": 4,
                 "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 2048,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
+                "warp_tile_n": 2,
                 "bits": 256,
                 "use_direct_write": true
             }
@@ -1747,86 +1667,6 @@
                 "K": 5120
             },
             "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 8,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 4096,
-                "N": 5120,
-                "K": 5120
-            },
-            "layout": {
                 "A": "row_major",
                 "B": "col_major",
                 "C": "col_major"
@@ -1835,14 +1675,14 @@
                 "warps_m": 4,
                 "warps_n": 4,
                 "warp_tile_m": 4,
-                "warp_tile_n": 4,
+                "warp_tile_n": 2,
                 "bits": 256,
                 "use_direct_write": false
             }
         },
         {
             "range": {
-                "M": 4096,
+                "M": 2048,
                 "N": 5120,
                 "K": 5120
             },
@@ -1862,7 +1702,7 @@
         },
         {
             "range": {
-                "M": 4096,
+                "M": 2048,
                 "N": 5120,
                 "K": 5120
             },
@@ -1882,7 +1722,7 @@
         },
         {
             "range": {
-                "M": 4096,
+                "M": 2048,
                 "N": 5120,
                 "K": 5120
             },
@@ -1890,6 +1730,26 @@
                 "A": "col_major",
                 "B": "col_major",
                 "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 2048,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
             },
             "config": {
                 "warps_m": 8,
@@ -1907,26 +1767,6 @@
                 "K": 5120
             },
             "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
                 "A": "row_major",
                 "B": "row_major",
                 "C": "row_major"
@@ -1942,9 +1782,9 @@
         },
         {
             "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
             },
             "layout": {
                 "A": "row_major",
@@ -1962,9 +1802,9 @@
         },
         {
             "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
             },
             "layout": {
                 "A": "row_major",
@@ -1976,95 +1816,95 @@
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "row_major",
-                "B": "col_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 2,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "row_major",
-                "C": "col_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 2,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 256,
-                "use_direct_write": false
-            }
-        },
-        {
-            "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
-            },
-            "layout": {
-                "A": "col_major",
-                "B": "col_major",
-                "C": "row_major"
-            },
-            "config": {
-                "warps_m": 4,
-                "warps_n": 4,
-                "warp_tile_m": 4,
-                "warp_tile_n": 4,
-                "bits": 128,
+                "bits": 64,
                 "use_direct_write": true
             }
         },
         {
             "range": {
-                "M": 32768,
-                "N": 4096,
-                "K": 4096
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
+            }
+        },
+        {
+            "range": {
+                "M": 4096,
+                "N": 5120,
+                "K": 5120
             },
             "layout": {
                 "A": "col_major",
@@ -2078,6 +1918,166 @@
                 "warp_tile_n": 4,
                 "bits": 256,
                 "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 8,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "row_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 128,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "row_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 2,
+                "warps_n": 4,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "row_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": false
+            }
+        },
+        {
+            "range": {
+                "M": 32768,
+                "N": 4096,
+                "K": 4096
+            },
+            "layout": {
+                "A": "col_major",
+                "B": "col_major",
+                "C": "col_major"
+            },
+            "config": {
+                "warps_m": 4,
+                "warps_n": 2,
+                "warp_tile_m": 4,
+                "warp_tile_n": 4,
+                "bits": 256,
+                "use_direct_write": true
             }
         },
         {
@@ -2156,7 +2156,7 @@
                 "warps_n": 4,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 128,
+                "bits": 256,
                 "use_direct_write": false
             }
         },
@@ -2212,11 +2212,11 @@
                 "C": "row_major"
             },
             "config": {
-                "warps_m": 8,
+                "warps_m": 4,
                 "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
-                "bits": 128,
+                "bits": 256,
                 "use_direct_write": false
             }
         },
@@ -2233,11 +2233,11 @@
             },
             "config": {
                 "warps_m": 4,
-                "warps_n": 4,
+                "warps_n": 2,
                 "warp_tile_m": 4,
                 "warp_tile_n": 4,
                 "bits": 256,
-                "use_direct_write": false
+                "use_direct_write": true
             }
         }
     ]

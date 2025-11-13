@@ -185,6 +185,7 @@ std::string generate_kernel_source(const config_params& config)
 
     // Include the existing headers
     kernel_source << R"(
+#define std __hip_internal
 #include <kernel/kernel.hpp>
 
 namespace rocm_wmma_gemm
@@ -308,9 +309,16 @@ bool compile_kernel(const config_params& config)
     // Add name expression for the specific template instantiation BEFORE compilation
     HIPRTC_CHECK(hiprtcAddNameExpression(prog, kernel_name.c_str()));
 
+    std::string rocm_path    = std::string(ROCM_INCLUDE_DIR);
+    std::string rocm_include = "-I" + rocm_path + "/include";
+
     // Set compilation options
-    std::vector<const char*> options
-        = {"-O3", "-ffast-math", "-mcumode", "-std=c++20", config.gpu_arch.c_str()};
+    std::vector<const char*> options = {"-O3",
+                                        "-ffast-math",
+                                        "-mcumode",
+                                        "-std=c++20",
+                                        config.gpu_arch.c_str(),
+                                        rocm_include.c_str()};
 
     // Compile the program
     hiprtcResult compile_result = hiprtcCompileProgram(prog, options.size(), options.data());

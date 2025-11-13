@@ -79,9 +79,11 @@ target_include_directories(tuner PUBLIC
 
 # Link HIP libraries
 target_link_libraries(tuner PUBLIC ${HIP_LIBRARIES} hiprtc benchmark::benchmark)
+target_link_directories(tuner PRIVATE ${ROCM_ROOT}/lib)
 
 target_compile_definitions(tuner PRIVATE
     PROJECT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    ROCM_INCLUDE_DIR="${ROCM_ROOT}"
 )
 
 # Copy tune.py to build directory

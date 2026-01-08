@@ -1,16 +1,19 @@
+# Define targets to build for
+set(GPU_TARGET "gfx1151" CACHE STRING "GPU targets to build for")
+
 # Create the config directory in the binary dir if it doesn't exist
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/src/kernel_inst)
 
 # Tell CMake to reconfigure if the config file changes
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config.json)
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config_${GPU_TARGET}.json)
 
 # Run the Python script during CMake configuration to generate all files
 message(STATUS "Generating GEMM configuration and kernel sources...")
 execute_process(
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config/generate_config.py
-            ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/config/gemm_config_${GPU_TARGET}.json
             ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel/config_generated.hpp
             --kernel-dir ${CMAKE_CURRENT_BINARY_DIR}/src/kernel_inst
     RESULT_VARIABLE GENERATE_RESULT
@@ -44,7 +47,7 @@ endif()
 set(KERNEL_LOOKUP_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/src/kernel_inst/kernel_lookup.cpp")
 
 # Build the library with gemm.cpp, kernel_lookup.cpp, and all generated kernel sources
-add_library(rocm_wmma_gemm STATIC src/gemm.cpp ${KERNEL_LOOKUP_SOURCE} ${KERNEL_SOURCES})
+add_library(rocm_wmma_gemm SHARED src/gemm.cpp ${KERNEL_LOOKUP_SOURCE} ${KERNEL_SOURCES})
 
 # Force CMake to regenerate if kernel sources change
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -62,6 +65,7 @@ target_link_libraries(rocm_wmma_gemm PUBLIC ${HIP_LIBRARIES})
 
 # Add optimization flags
 target_compile_options(rocm_wmma_gemm PRIVATE
+    --offload-arch=${GPU_TARGET}
     -O3                 # High optimization
     -ffast-math         # Fast math operations (may break strict IEEE compliance)
     -mcumode            # CU mode for RDNA GPUs

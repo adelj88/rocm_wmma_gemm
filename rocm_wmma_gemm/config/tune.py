@@ -30,52 +30,36 @@ class OptunaWMMATuner:
             base_configs = [
                 (4, 4, 4, 4, 256),
                 (4, 4, 4, 4, 128),
-                (4, 4, 4, 4, 64),
                 (2, 4, 4, 4, 256),
                 (2, 4, 4, 4, 128),
-                (2, 4, 4, 4, 64),
-                (4, 2, 4, 4, 256),
+                (2, 2, 4, 4, 256),
                 (2, 2, 4, 4, 256),
                 (2, 2, 4, 4, 128),
-                (2, 2, 4, 4, 64),
-                (4, 2, 2, 4, 256),
-                (4, 2, 2, 4, 128),
-                (4, 2, 2, 4, 64),
-                (2, 4, 4, 2, 256),
-                (2, 4, 4, 2, 128),
-                (2, 4, 4, 2, 64),
-                (4, 4, 4, 2, 256),
-                (4, 4, 2, 2, 256),
-                (4, 4, 2, 2, 128),
-                (4, 4, 2, 2, 64),
-                (2, 8, 4, 4, 256),
-                (2, 8, 4, 4, 128),
-                (2, 8, 4, 4, 64),
-                (4, 8, 2, 1, 256),
-                (4, 8, 2, 1, 128),
-                (4, 8, 2, 1, 64),
-                (4, 4, 1, 1, 256),
-                (4, 4, 1, 1, 128),
-                (4, 4, 1, 1, 64),
-                (2, 1, 2, 2, 256),
-                (2, 1, 2, 2, 128),
-
+                (1, 4, 4, 4, 256),
+                (1, 4, 4, 4, 128),
+                (8, 4, 1, 2, 256),
+                (8, 2, 1, 4, 256),
+                (2, 1, 2, 4, 256)
             ]
-            # Add both direct write variants
+            # Add all combinations of buffer_first, use_async and use_direct_write
             self.baselines = []
             for cfg in base_configs:
-                self.baselines.append(cfg + (False,))
-                self.baselines.append(cfg + (True,))
+                for bf in [False, True]:
+                    for ua in [False, True]:
+                        for udw in [False, True]:
+                            self.baselines.append(cfg + (bf, ua, udw))
         else:
             self.baselines = baselines
 
-        # Parameter space definitions - now 6 parameters
+        # Parameter space definitions
         self.param_space = {
             'warps_m': [1, 2, 4, 8],
             'warps_n': [1, 2, 4, 8],
             'warp_tile_m': [1, 2, 4, 8],
             'warp_tile_n': [1, 2, 4, 8],
             'bits': [64, 128, 256],
+            'buffer_first': [False, True],
+            'use_async': [False, True],
             'use_direct_write': [False, True]
         }
 
@@ -99,18 +83,20 @@ class OptunaWMMATuner:
                 for warp_tile_m in self.param_space['warp_tile_m']:
                     for warp_tile_n in self.param_space['warp_tile_n']:
                         for bits in self.param_space['bits']:
-                            for use_direct_write in self.param_space['use_direct_write']:
-                                count += 1
-                                config = (warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write)
-                                if self._check_constraints(config):
-                                    configs.append(config)
+                            for buffer_first in self.param_space['buffer_first']:
+                                for use_async in self.param_space['use_async']:
+                                    for use_direct_write in self.param_space['use_direct_write']:
+                                        count += 1
+                                        config = (warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write)
+                                        if self._check_constraints(config):
+                                            configs.append(config)
 
         print(f"Checked {count} total combinations, {len(configs)} valid after constraints")
         return configs
 
     def _check_constraints(self, config):
         """Check memory and resource constraints for WMMA."""
-        warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write = config
+        warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write = config
 
         if warps_m == 0 or warps_n == 0 or warp_tile_m == 0 or warp_tile_n == 0:
             return False
@@ -155,7 +141,7 @@ class OptunaWMMATuner:
 
     def _evaluate_config(self, M, N, K, layout_a, layout_b, layout_c, config):
         """Evaluate a configuration and return timing."""
-        warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write = config
+        warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write = config
 
         try:
             result = subprocess.run([
@@ -164,6 +150,8 @@ class OptunaWMMATuner:
                 str(warps_m), str(warps_n),
                 str(warp_tile_m), str(warp_tile_n),
                 str(bits),
+                str(1 if buffer_first else 0),
+                str(1 if use_async else 0),
                 str(1 if use_direct_write else 0),
                 str(layout_a), str(layout_b), str(layout_c),
                 self.gpu_arch
@@ -189,9 +177,11 @@ class OptunaWMMATuner:
         warp_tile_m = trial.suggest_categorical('warp_tile_m', self.param_space['warp_tile_m'])
         warp_tile_n = trial.suggest_categorical('warp_tile_n', self.param_space['warp_tile_n'])
         bits = trial.suggest_categorical('bits', self.param_space['bits'])
+        buffer_first = trial.suggest_categorical('buffer_first', self.param_space['buffer_first'])
+        use_async = trial.suggest_categorical('use_async', self.param_space['use_async'])
         use_direct_write = trial.suggest_categorical('use_direct_write', self.param_space['use_direct_write'])
 
-        config = (warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write)
+        config = (warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write)
 
         # Check constraints - if invalid, PRUNE the trial (don't count it)
         if not self._check_constraints(config):
@@ -231,14 +221,22 @@ class OptunaWMMATuner:
         self.best_time = float('inf')
         self.improvement_history = []
 
+        n_baselines = len(self.baselines)
+        n_random_exploration = 50 
+
         # Create Optuna study
         study = optuna.create_study(
             direction='minimize',
             sampler=optuna.samplers.TPESampler(
                 seed=self.random_seed,
-                n_startup_trials=min(20, max_evaluations // 3),
-                n_ei_candidates=24,
-                multivariate=True
+                n_startup_trials=n_baselines + n_random_exploration,
+                n_ei_candidates=64, 
+                multivariate=True,
+                consider_prior=True,
+                prior_weight=1.0, 
+                consider_magic_clip=True,
+                consider_endpoints=False,
+                warn_independent_sampling=True
             )
         )
 
@@ -249,7 +247,7 @@ class OptunaWMMATuner:
 
         for i, baseline in enumerate(baselines_to_use):
             if self._check_constraints(baseline):
-                warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write = baseline
+                warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write = baseline
 
                 study.enqueue_trial({
                     'warps_m': warps_m,
@@ -257,6 +255,8 @@ class OptunaWMMATuner:
                     'warp_tile_m': warp_tile_m,
                     'warp_tile_n': warp_tile_n,
                     'bits': bits,
+                    'buffer_first': buffer_first,
+                    'use_async': use_async,
                     'use_direct_write': use_direct_write
                 })
 
@@ -297,7 +297,9 @@ class OptunaWMMATuner:
                 'warp_tile_m': int(self.best_config[2]),
                 'warp_tile_n': int(self.best_config[3]),
                 'bits': int(self.best_config[4]),
-                'use_direct_write': bool(self.best_config[5])
+                'buffer_first': bool(self.best_config[5]),
+                'use_async': bool(self.best_config[6]),
+                'use_direct_write': bool(self.best_config[7])
             },
             'time_ms': float(self.best_time),
             'evaluations': self.total_evaluations,
@@ -389,6 +391,8 @@ def load_existing_json(input_file):
                 cfg['warp_tile_m'],
                 cfg['warp_tile_n'],
                 cfg['bits'],
+                cfg['buffer_first'],
+                cfg['use_async'],
                 cfg['use_direct_write']
             )
 
@@ -434,7 +438,9 @@ def merge_results(existing_configs_raw, new_results):
                     'warp_tile_m': int(baseline[2]),
                     'warp_tile_n': int(baseline[3]),
                     'bits': int(baseline[4]),
-                    'use_direct_write': bool(baseline[5])
+                    'buffer_first': bool(baseline[5]),
+                    'use_async': bool(baseline[6]),
+                    'use_direct_write': bool(baseline[7])
                 },
                 "avg_time_ms": None,  # Unknown from existing
                 "evaluations": 0,
@@ -492,16 +498,18 @@ def parse_layouts(layout_strings):
     return layouts
 
 def parse_baselines(baseline_strings):
-    """Parse baseline strings like '4,4,4,4,256,0' into tuples."""
+    """Parse baseline strings like '4,4,4,4,256,256,0,1,0' into tuples."""
     baselines = []
     for baseline_str in baseline_strings:
         try:
             parts = baseline_str.split(',')
-            if len(parts) != 6:
-                raise ValueError(f"Invalid baseline format: {baseline_str}. Expected warps_m,warps_n,warp_tile_m,warp_tile_n,bits,use_direct_write")
+            if len(parts) != 7:
+                raise ValueError(f"Invalid baseline format: {baseline_str}. Expected warps_m,warps_n,warp_tile_m,warp_tile_n,bits,buffer_first,use_async,use_direct_write")
             warps_m, warps_n, warp_tile_m, warp_tile_n, bits = map(int, parts[:5])
-            use_direct_write = bool(int(parts[5]))
-            baselines.append((warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write))
+            buffer_first = bool(int(parts[5]))
+            use_async = bool(int(parts[6]))
+            use_direct_write = bool(int(parts[7]))
+            baselines.append((warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write))
         except ValueError as e:
             print(f"Error parsing baseline '{baseline_str}': {e}")
             sys.exit(1)
@@ -551,9 +559,9 @@ Examples:
     parser.add_argument('--layouts', nargs='*',
                        help='Matrix (A,B,C) layouts as A,B,C (e.g., row_major,col_major,row_major or r,c,r)')
     parser.add_argument('--baselines', nargs='*',
-                       help='Baseline configs as warps_m,warps_n,warp_tile_m,warp_tile_n,bits,use_direct_write (overrides input file)')
-    parser.add_argument('--budget', type=int, default=150,
-                       help='Evaluation budget per layout combination (default: 150)')
+                       help='Baseline configs as warps_m,warps_n,warp_tile_m,warp_tile_n,bits,buffer_first,use_async,use_direct_write (overrides input file)')
+    parser.add_argument('--budget', type=int, default=350,
+                       help='Evaluation budget per layout combination (default: 350)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducible results (default: 42)')
     parser.add_argument('--gpu-arch', default='gfx1100', help='GPU architecture (default: gfx1100)')
@@ -612,8 +620,8 @@ Examples:
         baselines = None  # Will use default baselines
         print("Using default baselines")
 
-    print("Optuna TPE WMMA Tuner (6-parameter version)")
-    print(f"Parameters: warps_m, warps_n, warp_tile_m, warp_tile_n, bits, use_direct_write")
+    print("Optuna TPE WMMA Tuner")
+    print(f"Parameters: warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write")
     print(f"Random seed: {args.seed}")
     print(f"GPU Architecture: {args.gpu_arch}")
     print(f"Evaluation budget per layout: {args.budget}")
@@ -677,7 +685,7 @@ Examples:
             coverage = result.get('space_coverage_percent', 0)
             print(f"  {layout_key}: {config['warps_m']},{config['warps_n']},"
                   f"{config['warp_tile_m']},{config['warp_tile_n']},"
-                  f"{config['bits']},{int(config['use_direct_write'])} -> "
+                  f"{config['bits']},{int(config['buffer_first'])},{int(config['use_async'])},{int(config['use_direct_write'])} -> "
                   f"{result['avg_time_ms']:.3f}ms ({result['evaluations']} evals, {coverage:.1f}% coverage)")
             total_evaluations += result['evaluations']
             total_coverage += coverage

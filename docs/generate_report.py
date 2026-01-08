@@ -359,11 +359,21 @@ def generate_performance_plots(wmma_results, rocblas_results, output_file, title
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate WMMA GEMM benchmark report by running binaries',
+        description='Generate WMMA GEMM benchmark report from saved outputs or by running binaries',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run benchmarks with default shapes
+  # RECOMMENDED: Generate report from saved benchmark outputs (no Python overhead)
+  python generate_report.py \\
+      --wmma-output bench_wmma.txt \\
+      --rocblas-output bench_rocblas.txt \\
+      --gpu "AMD Radeon 8060S" \\
+      --os "Ubuntu 24.04.3 LTS" \\
+      --rocm-version "7.1.1" \\
+      --markdown-output gfx1151_square.md \\
+      --plot-output gfx1151_square.png
+
+  # Old mode: Run benchmarks directly (may have Python subprocess overhead)
   python generate_report.py \\
       --wmma-bin ./build/bench/bench_half_half \\
       --rocblas-bin ./build/bench/bench_rocblas_half \\
@@ -371,49 +381,39 @@ Examples:
       --os "Ubuntu 24.04.1 LTS" \\
       --rocm-version "6.4.1"
 
-  # Custom square matrix shapes (colon-separated)
-  python generate_report.py \\
-      --wmma-bin ./build/bench/bench_half_half \\
-      --rocblas-bin ./build/bench/bench_rocblas_half \\
-      --shapes "512:1024:2048:4096" \\
-      --gpu "AMD Radeon RX 7900 GRE"
+Recommended workflow:
+  1. Run benchmarks separately (zero Python overhead):
+     ./run_benchmarks.sh \\
+         --wmma-bin ./build/benchmark/bench_half_half \\
+         --rocblas-bin ./build/benchmark/bench_rocblas \\
+         --shapes "1024:2048:4096" \\
+         --wmma-output wmma_square.txt \\
+         --rocblas-output rocblas_square.txt
 
-  # Mix of square and rectangular matrices (colon-separated)
-  python generate_report.py \\
-      --wmma-bin ./build/bench/bench_half_half \\
-      --rocblas-bin ./build/bench/bench_rocblas_half \\
-      --shapes "1024:2048:1024,2048,512:2048,1024,1024:4096,4096,2048" \\
-      --title "Mixed Matrix FP16 Performance" \\
-      --gpu "AMD Radeon RX 7900 GRE"
-
-  # Save benchmark outputs for later analysis
-  python generate_report.py \\
-      --wmma-bin ./build/bench/bench_half_half \\
-      --rocblas-bin ./build/bench/bench_rocblas_half \\
-      --shapes "1024:2048:4096:8192" \\
-      --save-outputs \\
-      --gpu "AMD Radeon RX 7900 GRE"
-
-  # Batch count and verbose output
-  python generate_report.py \\
-      --wmma-bin ./build/bench/bench_half_half \\
-      --rocblas-bin ./build/bench/bench_rocblas_half \\
-      --batch-count 4 \\
-      --verbose \\
-      --gpu "AMD Radeon RX 7900 GRE"
+  2. Generate report from saved outputs:
+     python generate_report.py \\
+         --wmma-output wmma_square.txt \\
+         --rocblas-output rocblas_square.txt \\
+         --gpu "AMD Radeon 8060S" \\
+         --markdown-output report.md \\
+         --plot-output plot.png
         """)
 
-    # Input binaries
-    parser.add_argument('--wmma-bin', required=True,
-                       help='Path to rocm_wmma_gemm benchmark binary')
-    parser.add_argument('--rocblas-bin', required=True,
-                       help='Path to rocBLAS benchmark binary')
+    # Input sources (either from saved files or run binaries)
+    parser.add_argument('--wmma-output',
+                       help='Path to saved WMMA benchmark output file')
+    parser.add_argument('--rocblas-output',
+                       help='Path to saved rocBLAS benchmark output file')
+    parser.add_argument('--wmma-bin',
+                       help='Path to rocm_wmma_gemm benchmark binary (alternative to --wmma-output)')
+    parser.add_argument('--rocblas-bin',
+                       help='Path to rocBLAS benchmark binary (alternative to --rocblas-output)')
 
-    # Benchmark configuration
+    # Benchmark configuration (only used if running binaries)
     parser.add_argument('--shapes',
-                       help='Colon-separated list of matrix shapes (e.g., "1024:2048" or "1024:2048:1024,2048,512:4096,4096,2048")')
+                       help='Colon-separated list of matrix shapes (only for --wmma-bin mode)')
     parser.add_argument('--batch-count', type=int, default=1,
-                       help='Batch count for benchmarks (default: 1)')
+                       help='Batch count for benchmarks (only for --wmma-bin mode, default: 1)')
 
     # Report configuration
     parser.add_argument('--title', default='FP16-FP16 WMMA GEMM Performance Benchmarks',
@@ -431,7 +431,7 @@ Examples:
     parser.add_argument('--plot-output', default='wmma_performance_plot.png',
                        help='Output plot file (default: wmma_performance_plot.png)')
     parser.add_argument('--save-outputs', action='store_true',
-                       help='Save raw benchmark outputs to files')
+                       help='Save raw benchmark outputs to files (only for --wmma-bin mode)')
     parser.add_argument('--wmma-output-file', default='bench_wmma.txt',
                        help='File to save rocm_wmma_gemm output (default: bench_wmma.txt)')
     parser.add_argument('--rocblas-output-file', default='bench_rocblas.txt',
@@ -442,42 +442,75 @@ Examples:
     parser.add_argument('--no-plot', action='store_true',
                        help='Skip plot generation')
     parser.add_argument('--verbose', action='store_true',
-                       help='Print benchmark output to console')
+                       help='Print benchmark output to console (only for --wmma-bin mode)')
     parser.add_argument('--debug', action='store_true',
                        help='Print debug information for parsing')
 
     args = parser.parse_args()
 
-    # Run benchmarks
-    print("\n" + "="*80)
-    print("Running rocm_wmma_gemm benchmark...")
-    print("="*80)
-    wmma_output = run_benchmark(
-        args.wmma_bin,
-        shapes=args.shapes,
-        batch_count=args.batch_count,
-        verbose=args.verbose
-    )
+    # Validate input sources
+    using_files = args.wmma_output or args.rocblas_output
+    using_bins = args.wmma_bin or args.rocblas_bin
+    
+    if using_files and using_bins:
+        parser.error("Cannot mix --wmma-output/--rocblas-output with --wmma-bin/--rocblas-bin. Choose one mode.")
+    
+    if using_files:
+        if not args.wmma_output or not args.rocblas_output:
+            parser.error("When using file mode, both --wmma-output and --rocblas-output are required")
+        if not Path(args.wmma_output).exists():
+            parser.error(f"WMMA output file not found: {args.wmma_output}")
+        if not Path(args.rocblas_output).exists():
+            parser.error(f"rocBLAS output file not found: {args.rocblas_output}")
+        
+        # Read from files
+        print("\n" + "="*80)
+        print("Reading saved benchmark outputs...")
+        print("="*80)
+        print(f"WMMA output: {args.wmma_output}")
+        print(f"rocBLAS output: {args.rocblas_output}")
+        
+        with open(args.wmma_output, 'r') as f:
+            wmma_output = f.read()
+        with open(args.rocblas_output, 'r') as f:
+            rocblas_output = f.read()
+    
+    elif using_bins:
+        if not args.wmma_bin or not args.rocblas_bin:
+            parser.error("When using binary mode, both --wmma-bin and --rocblas-bin are required")
+        
+        # Run benchmarks
+        print("\n" + "="*80)
+        print("Running rocm_wmma_gemm benchmark...")
+        print("="*80)
+        wmma_output = run_benchmark(
+            args.wmma_bin,
+            shapes=args.shapes,
+            batch_count=args.batch_count,
+            verbose=args.verbose
+        )
 
-    if args.save_outputs:
-        with open(args.wmma_output_file, 'w') as f:
-            f.write(wmma_output)
-        print(f"Saved rocm_wmma_gemm output to {args.wmma_output_file}")
+        if args.save_outputs:
+            with open(args.wmma_output_file, 'w') as f:
+                f.write(wmma_output)
+            print(f"Saved rocm_wmma_gemm output to {args.wmma_output_file}")
 
-    print("\n" + "="*80)
-    print("Running rocBLAS benchmark...")
-    print("="*80)
-    rocblas_output = run_benchmark(
-        args.rocblas_bin,
-        shapes=args.shapes,
-        batch_count=args.batch_count,
-        verbose=args.verbose
-    )
+        print("\n" + "="*80)
+        print("Running rocBLAS benchmark...")
+        print("="*80)
+        rocblas_output = run_benchmark(
+            args.rocblas_bin,
+            shapes=args.shapes,
+            batch_count=args.batch_count,
+            verbose=args.verbose
+        )
 
-    if args.save_outputs:
-        with open(args.rocblas_output_file, 'w') as f:
-            f.write(rocblas_output)
-        print(f"Saved rocBLAS output to {args.rocblas_output_file}")
+        if args.save_outputs:
+            with open(args.rocblas_output_file, 'w') as f:
+                f.write(rocblas_output)
+            print(f"Saved rocBLAS output to {args.rocblas_output_file}")
+    else:
+        parser.error("Must specify either --wmma-output/--rocblas-output OR --wmma-bin/--rocblas-bin")
 
     # Parse outputs
     print("\nParsing rocm_wmma_gemm benchmark results...")
@@ -512,3 +545,4 @@ Examples:
 
 if __name__ == "__main__":
     main()
+    

@@ -20,15 +20,19 @@ This implementation leverages ROCm's Wave Matrix Multiply-Accumulate (WMMA) intr
 
 ### Performance Analysis Across Matrix Shapes
 
-Testing on AMD 7900 GRE reveals distinct performance patterns for both square and rectangular matrices:
+Testing on AMD RX 7900 GRE (gfx1100) and 8060S (gfx1151) reveals distinct performance patterns for both square and rectangular matrices:
 
 **Square Matrix Performance by Layout:**
 
-![WMMA Square Performance](docs/square.png)
+![gfx1100 WMMA Square Performance](docs/gfx1100_square.png)
+
+![gfx1151 WMMA Square Performance](docs/gfx1151_square.png)
 
 **Rectangular Matrix Performance by Layout:**
 
-![WMMA Rectangular Performance](docs/rectangle.png)
+![gfx1100 WMMA Rectangular Performance](docs/gfx1100_rectangle.png)
+
+![gfx1151 WMMA Rectangular Performance](docs/gfx1151_rectangle.png)
 
 **Key Finding**: `rocm_wmma_gemm` remains competitive with rocBLAS across diverse matrix configurations, demonstrating that WMMA intrinsics can be effectively leveraged for high-performance GEMM implementations.
 
@@ -41,6 +45,7 @@ Testing on AMD 7900 GRE reveals distinct performance patterns for both square an
   - Python packages (can be installed with pip or conda)
     - ``numpy``
     - ``optuna``
+    - ``matplotlib``
 - AMD RDNA3/RDNA3.5 GPU (required for WMMA support)
 
 ### Build Steps
@@ -53,7 +58,10 @@ Testing on AMD 7900 GRE reveals distinct performance patterns for both square an
    ```bash
    mkdir build
    cd build
-   CXX=/opt/rocm/bin/hipcc cmake ..
+   # build for gfx1100
+   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGET=gfx1100 ..
+   # build for gfx1151
+   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGET=gfx1151 ..
    make
    ```
 
@@ -114,21 +122,33 @@ python3 tune.py --gpu-arch gfx1103
 python3 tune.py --output my_config.json
 
 # Custom baseline configurations
-python3 tune.py --baselines 4,4,4,4,256,0 2,2,4,4,128,1 8,2,2,2,64,0
+python3 tune.py --baselines 4,4,4,4,256,0,0 2,2,4,4,128,1,1 8,2,2,2,64,1,0
 ```
 
 ## Performance Results
 Below are benchmark results (in TFLOPs) that compares `rocm_wmma_gemm` against `rocblas` for all layouts and different sizes.
 
-- [View detailed square matrix benchmarks](docs/square.md)
-- [View detailed rectangular matrix benchmarks](docs/rectangle.md)
+- [View detailed gfx1100 square matrix benchmarks](docs/gfx1100_square.md)
+- [View detailed gfx1100 rectangular matrix benchmarks](docs/gfx1100_rectangle.md)
+- [View detailed gfx1151 square matrix benchmarks](docs/gfx1151_square.md)
+- [View detailed gfx1151 rectangular matrix benchmarks](docs/gfx1151_rectangle.md)
+
+To generate graphs, the following can be run:
+```bash
+cd docs
+
+# Running standard benchmark sizes
+bash generate_report.sh --wmma-bin ../build/benchmark/bench_half_half --rocblas-bin ../build/benchmark/bench_rocblas --gpu "AMD Radeon 8060S" --os "Ubuntu 24.04.3 LTS" --rocm-version "7.1.1" --title "Benchmarks" --markdown-output gfx1151_results.md --plot-output gfx1151_results.png
+
+# Running specified benchmark sizes
+bash generate_report.sh --wmma-bin ../build/benchmark/bench_half_half --rocblas-bin ../build/benchmark/bench_rocblas --gpu "AMD Radeon 8060S" --os "Ubuntu 24.04.3 LTS" --rocm-version "7.1.1" --title "Benchmarks" --markdown-output gfx1151_results.md --plot-output gfx1151_results.png --shapes 4096,4096,1024:8192,8192,1024
+```
 
 ## Future Plans
-1. Experiment with SoA for fragment class
-2. Add batched unit tests
-3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K)
-4. Tuning for RDNA3.5
-5. Modify fragments to support RDNA4 WMMA
+1. Enable building 2 targets together to allow for dynamic selection based on GPU.
+2. Add batched unit tests.
+3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K).s
+4. Modify fragments to support RDNA4 WMMA.
 
 ## License
 

@@ -165,6 +165,8 @@ struct config_params
     int         warp_tile_m;
     int         warp_tile_n;
     int         bits;
+    bool        buffer_first;
+    bool        use_async;
     bool        use_direct_write;
     int         layout_a; // 0=row_major, 1=col_major
     int         layout_b; // 0=row_major, 1=col_major
@@ -200,6 +202,8 @@ template __global__ __launch_bounds__()"
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
                   << config.warp_tile_n << ", " << config.bits << ", "
+                  << (config.buffer_first ? "true" : "false") << ", "
+                  << (config.use_async ? "true" : "false") << ", "
                   << (config.use_direct_write ? "true" : "false") << R"(>(
     half* C, const half* A, const half* B, int M, int N, int K);
 
@@ -301,6 +305,8 @@ bool compile_kernel(const config_params& config)
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
                    << ", " << config.warp_tile_n << ", " << config.bits << ", "
+                   << (config.buffer_first ? "true" : "false") << ", "
+                   << (config.use_async ? "true" : "false") << ", "
                    << (config.use_direct_write ? "true" : "false") << ">";
 
     std::string kernel_name = kernel_name_ss.str();
@@ -436,13 +442,16 @@ void run_kernel_benchmark(benchmark::State& state)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 14)
+    if(argc != 16)
     {
         std::cerr << "Usage: " << argv[0]
-                  << " M N K warps_m warps_n warp_tile_m warp_tile_n bits use_direct_write "
+                  << " M N K warps_m warps_n warp_tile_m warp_tile_n bits"
+                     "buffer_first"
+                     "use async"
+                     "use_direct_write "
                      "layout_a layout_b layout_c gpu_arch"
                   << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 256 0 0 1 0 gfx1100"
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 256 1 0 1 0 1 0 gfx1100"
                   << std::endl;
         return 1;
     }
@@ -457,11 +466,13 @@ int main(int argc, char* argv[])
     g_config.warp_tile_m      = std::atoi(argv[6]);
     g_config.warp_tile_n      = std::atoi(argv[7]);
     g_config.bits             = std::atoi(argv[8]);
-    g_config.use_direct_write = (std::atoi(argv[9]) != 0);
-    g_config.layout_a         = std::atoi(argv[10]);
-    g_config.layout_b         = std::atoi(argv[11]);
-    g_config.layout_c         = std::atoi(argv[12]);
-    std::string tmp           = argv[13];
+    g_config.buffer_first     = (std::atoi(argv[9]) != 0);
+    g_config.use_async        = (std::atoi(argv[10]) != 0);
+    g_config.use_direct_write = (std::atoi(argv[11]) != 0);
+    g_config.layout_a         = std::atoi(argv[12]);
+    g_config.layout_b         = std::atoi(argv[13]);
+    g_config.layout_c         = std::atoi(argv[14]);
+    std::string tmp           = argv[15];
     g_config.gpu_arch         = "--offload-arch=" + tmp;
 
     // Initialize test data
@@ -476,9 +487,9 @@ int main(int argc, char* argv[])
 
     std::cout << "Successfully compiled kernel for config: " << g_config.warps_m << ","
               << g_config.warps_n << "," << g_config.warp_tile_m << "," << g_config.warp_tile_n
-              << "," << g_config.bits << "," << g_config.use_direct_write << ","
-              << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
-              << std::endl;
+              << "," << g_config.bits << "," << g_config.buffer_first << "," << g_config.use_async
+              << "," << g_config.use_direct_write << "," << g_config.layout_a << ","
+              << g_config.layout_b << "," << g_config.layout_c << std::endl;
 
     // Initialize benchmark
     benchmark::Initialize(&argc, argv);

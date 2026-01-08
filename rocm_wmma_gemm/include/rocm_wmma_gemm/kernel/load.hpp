@@ -28,75 +28,111 @@
 namespace rocm_wmma_gemm
 {
 
-template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+// Col-major load with optional padding
+template<m_layout ACCESS,
+         int      MAX_BITS,
+         int      BLOCK_SIZE,
+         int      BLOCK_M,
+         int      BLOCK_N,
+         int      PADDING,
+         class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
 {
+    // For col-major, padding is added to the row dimension (leading dimension)
+    constexpr int padded_rows = BLOCK_M + PADDING;
+
     constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes = min_block_dim * sizeof(T);
 
-    // Find largest power of 2 (in T units) that divides min_block_bytes
-    constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
+    constexpr int element_alignment = min_block_bytes / sizeof(T);
     constexpr int calculated_width  = element_alignment & (-element_alignment);
     constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_vector_width  = max_bytes / sizeof(T);
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
     using type                 = typename type_selector<T>::type;
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+
+    // Total elements to load (without padding)
+    constexpr int total_elements = BLOCK_M * BLOCK_N;
     constexpr int vectors_per_thread
-        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        = ((total_elements / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     for(int i = 0; i < vectors_per_thread; ++i)
     {
         const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        if(idx < (BLOCK_M * BLOCK_N))
+        if(idx < total_elements)
         {
-            const int col   = idx / BLOCK_M;
-            const int row   = idx % BLOCK_M;
+            // Compute position in logical (no padding) layout
+            const int col = idx / BLOCK_M;
+            const int row = idx % BLOCK_M;
+
+            // Global memory index (no padding)
             const int gload = col * M + row;
 
-            *reinterpret_cast<vector_type*>(output + idx)
+            // Shared memory index (with padding in row dimension)
+            const int sstore = col * padded_rows + row;
+
+            *reinterpret_cast<vector_type*>(output + sstore)
                 = *reinterpret_cast<const vector_type*>(input + gload);
         }
     }
 }
 
-template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+// Row-major load with optional padding
+template<m_layout ACCESS,
+         int      MAX_BITS,
+         int      BLOCK_SIZE,
+         int      BLOCK_M,
+         int      BLOCK_N,
+         int      PADDING,
+         class T>
 __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
 {
+    // For row-major, padding is added to the column dimension (leading dimension)
+    constexpr int padded_cols = BLOCK_N + PADDING;
+
     constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes = min_block_dim * sizeof(T);
 
-    // Find largest power of 2 (in T units) that divides min_block_bytes
-    constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
+    constexpr int element_alignment = min_block_bytes / sizeof(T);
     constexpr int calculated_width  = element_alignment & (-element_alignment);
     constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_vector_width  = max_bytes / sizeof(T);
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
     using type                 = typename type_selector<T>::type;
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
+
+    // Total elements to load (without padding)
+    constexpr int total_elements = BLOCK_M * BLOCK_N;
     constexpr int vectors_per_thread
-        = (((BLOCK_M * BLOCK_N) / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        = ((total_elements / vector_width) + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     for(int i = 0; i < vectors_per_thread; ++i)
     {
         const int idx = (tid * vector_width) + (i * BLOCK_SIZE * vector_width);
 
-        if(idx < (BLOCK_M * BLOCK_N))
+        if(idx < total_elements)
         {
-            const int row   = idx / BLOCK_N;
-            const int col   = idx % BLOCK_N;
+            // Compute position in logical (no padding) layout
+            const int row = idx / BLOCK_N;
+            const int col = idx % BLOCK_N;
+
+            // Global memory index (no padding)
             const int gload = row * N + col;
 
-            *reinterpret_cast<vector_type*>(output + idx)
+            // Shared memory index (with padding in column dimension)
+            const int sstore = row * padded_cols + col;
+
+            *reinterpret_cast<vector_type*>(output + sstore)
                 = *reinterpret_cast<const vector_type*>(input + gload);
         }
     }
@@ -110,11 +146,10 @@ __device__ __forceinline__ auto
     constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes = min_block_dim * sizeof(T);
 
-    // Find largest power of 2 (in T units) that divides min_block_bytes
-    constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
+    constexpr int element_alignment = min_block_bytes / sizeof(T);
     constexpr int calculated_width  = element_alignment & (-element_alignment);
     constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_vector_width  = max_bytes / sizeof(T);
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 
@@ -166,11 +201,10 @@ __device__ __forceinline__ auto
     constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
     constexpr int min_block_bytes = min_block_dim * sizeof(T);
 
-    // Find largest power of 2 (in T units) that divides min_block_bytes
-    constexpr int element_alignment = min_block_bytes / sizeof(T); // This is just min_block_dim
+    constexpr int element_alignment = min_block_bytes / sizeof(T);
     constexpr int calculated_width  = element_alignment & (-element_alignment);
     constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T); // // 32 bytes = 2 * 128-bit loads
+    constexpr int max_vector_width  = max_bytes / sizeof(T);
     constexpr int actual_load_width
         = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
 

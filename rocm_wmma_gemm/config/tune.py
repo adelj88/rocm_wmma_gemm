@@ -94,8 +94,12 @@ class OptunaWMMATuner:
         print(f"Checked {count} total combinations, {len(configs)} valid after constraints")
         return configs
 
-    def _check_constraints(self, config):
-        """Check memory and resource constraints for WMMA."""
+    def _check_constraints(self, config, layout_a=None, layout_b=None):
+        """Check memory and resource constraints for WMMA.
+        
+        If layout_a and layout_b are provided, check for that specific layout.
+        Otherwise, check worst-case scenario (both layouts requiring padding).
+        """
         warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write = config
 
         if warps_m == 0 or warps_n == 0 or warp_tile_m == 0 or warp_tile_n == 0:
@@ -104,12 +108,28 @@ class OptunaWMMATuner:
         if bits == 0:
             return False
 
-        # Memory constraint
+        # Memory constraint with layout-aware padding
         wmma_tile = 16
         block_m = warps_m * warp_tile_m * wmma_tile
         block_n = warps_n * warp_tile_n * wmma_tile
         block_k = wmma_tile
-        lds_size = (block_m * block_k) + (block_k * block_n)
+        
+        # Conditional padding: add padding when strided access occurs in load_matrix
+        # Row-major A: strided access → needs padding on cols
+        # Col-major B: strided access → needs padding on rows
+        if layout_a is not None and layout_b is not None:
+            padding_a = 8 if layout_a == 0 else 0
+            padding_b = 8 if layout_b == 1 else 0
+        else:
+            # Worst-case: assume both need padding
+            padding_a = 8
+            padding_b = 8
+        
+        stride_a = block_k + padding_a
+        stride_b = block_k + padding_b
+        
+        # Shared memory size with padding
+        lds_size = (block_m * stride_a) + (stride_b * block_n)
         memory_bytes = 2 * lds_size * 2  # Double buffering * sizeof(half)
 
         if memory_bytes > self.max_shared_memory:
@@ -121,6 +141,65 @@ class OptunaWMMATuner:
             return False
 
         return True
+
+    def _generate_baseline_neighbors(self, config, num_neighbors=12):
+        """Generate valid neighboring configurations around a baseline."""
+        neighbors = [config]  # Include original
+        warps_m, warps_n, warp_tile_m, warp_tile_n, bits, bf, ua, udw = config
+        
+        perturbations = []
+        
+        # First priority: Keep warp params same, vary bits and boolean flags
+        # Try all bit values with current warp config
+        for new_bits in self.param_space['bits']:
+            if new_bits != bits:
+                new_config = list(config)
+                new_config[4] = new_bits
+                perturbations.append(tuple(new_config))
+        
+        # Toggle each boolean flag independently (keeping warp params and bits same)
+        for bool_idx in [5, 6, 7]:  # buffer_first, use_async, use_direct_write
+            new_config = list(config)
+            new_config[bool_idx] = not new_config[bool_idx]
+            perturbations.append(tuple(new_config))
+        
+        # Try all combinations of boolean flags (keeping warp params and bits same)
+        for new_bf in [False, True]:
+            for new_ua in [False, True]:
+                for new_udw in [False, True]:
+                    if (new_bf, new_ua, new_udw) != (bf, ua, udw):
+                        new_config = list(config)
+                        new_config[5] = new_bf
+                        new_config[6] = new_ua
+                        new_config[7] = new_udw
+                        perturbations.append(tuple(new_config))
+        
+        # Second priority: Vary warp parameters slightly
+        for param_idx, param_space_key in enumerate([
+            'warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n'
+        ]):
+            values = self.param_space[param_space_key]
+            current_val = config[param_idx]
+            if current_val not in values:
+                continue
+            current_idx = values.index(current_val)
+            
+            # Try one step up and down
+            for offset in [-1, 1]:
+                new_idx = current_idx + offset
+                if 0 <= new_idx < len(values):
+                    new_config = list(config)
+                    new_config[param_idx] = values[new_idx]
+                    perturbations.append(tuple(new_config))
+        
+        # Filter valid and unique configs
+        for perturbed in perturbations:
+            if self._check_constraints(perturbed) and perturbed not in neighbors:
+                neighbors.append(perturbed)
+                if len(neighbors) >= num_neighbors:
+                    break
+        
+        return neighbors
 
     def _parse_benchmark_output(self, output):
         """Parse benchmark output to extract timing (handles with/without repetitions)."""
@@ -183,13 +262,15 @@ class OptunaWMMATuner:
 
         config = (warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write)
 
-        # Check constraints - if invalid, PRUNE the trial (don't count it)
-        if not self._check_constraints(config):
+        # Get layout information for this problem
+        M, N, K, layout_a, layout_b, layout_c = self.current_problem
+        
+        # Check constraints with actual layout - if invalid, PRUNE the trial (don't count it)
+        if not self._check_constraints(config, layout_a, layout_b):
             trial.set_user_attr("invalid_combination", True)
             raise optuna.TrialPruned("Invalid parameter combination")
 
         # Evaluate the valid configuration
-        M, N, K, layout_a, layout_b, layout_c = self.current_problem
         time_ms = self._evaluate_config(M, N, K, layout_a, layout_b, layout_c, config)
 
         self.total_evaluations += 1
@@ -221,7 +302,15 @@ class OptunaWMMATuner:
         self.best_time = float('inf')
         self.improvement_history = []
 
-        n_baselines = len(self.baselines)
+        # Determine baseline configurations
+        if existing_baseline is None:
+            baselines_to_use = self.baselines
+        else:
+            # Generate neighbors around the existing baseline for better exploration
+            baselines_to_use = self._generate_baseline_neighbors(existing_baseline, num_neighbors=15)
+            print(f"  Generated {len(baselines_to_use)} baseline neighbors from existing config")
+        
+        n_baselines = len(baselines_to_use)
         n_random_exploration = 50 
 
         # Create Optuna study
@@ -242,11 +331,8 @@ class OptunaWMMATuner:
 
         print("Starting Optuna optimization...")
 
-        # Add baseline configurations
-        baselines_to_use = self.baselines if existing_baseline is None else [existing_baseline]
-
         for i, baseline in enumerate(baselines_to_use):
-            if self._check_constraints(baseline):
+            if self._check_constraints(baseline, layout_a, layout_b):
                 warps_m, warps_n, warp_tile_m, warp_tile_n, bits, buffer_first, use_async, use_direct_write = baseline
 
                 study.enqueue_trial({
@@ -259,9 +345,6 @@ class OptunaWMMATuner:
                     'use_async': use_async,
                     'use_direct_write': use_direct_write
                 })
-
-        if existing_baseline is not None:
-            print(f"  Using existing config as baseline: {existing_baseline}")
 
         # Run optimization
         study.optimize(self._objective_function_with_params, n_trials=max_evaluations, show_progress_bar=False)

@@ -35,23 +35,15 @@ template<int BLOCK_M, int BLOCK_N>
 class hilbert_mapping
 {
 private:
+    static __device__ __forceinline__ int largest_power_of_2(int n)
+    {
+        constexpr int total_bits = sizeof(int) * 8;
+        return 1 << ((total_bits - 1) - __clz(n));
+    }
+
     static __device__ __forceinline__ bool is_power_of_2(int n)
     {
         return n > 0 && (n & (n - 1)) == 0;
-    }
-
-    static __device__ __forceinline__ int largest_power_of_2_le(int n)
-    {
-        if(n <= 0)
-        {
-            return 0;
-        }
-
-        // Find the position of the most significant bit
-        constexpr int total_bits = sizeof(int) * 8;
-        int           msb_pos    = (total_bits - 1) - __clz(n);
-
-        return 1 << msb_pos;
     }
 
     static __device__ __forceinline__ void
@@ -82,82 +74,94 @@ private:
         }
     }
 
-public:
-    static __device__ __forceinline__ void
-        map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
+    static __device__ __forceinline__ void hilbert_recursive_mapping(int  tile_id,
+                                                                     int  region_m,
+                                                                     int  region_n,
+                                                                     int  offset_m,
+                                                                     int  offset_n,
+                                                                     int* block_row,
+                                                                     int* block_col)
     {
-        // Calculate the largest Hilbert square that fits
-        const int min_dim      = min(grid_m, grid_n);
-        const int hilbert_size = largest_power_of_2_le(min_dim);
-
-        // If the grid is too small or not suitable for Hilbert, use row-major
-        if(hilbert_size < 2)
+        // Base case: fall back to row-major for small or non-power-of-2 regions
+        if(region_m == 1 || region_n == 1 || !is_power_of_2(region_m) || !is_power_of_2(region_n))
         {
-            int row    = tile_id / grid_n;
-            int col    = tile_id % grid_n;
-            *block_row = row * BLOCK_M;
-            *block_col = col * BLOCK_N;
+            int row    = tile_id / region_n;
+            int col    = tile_id % region_n;
+            *block_row = (offset_m + row) * BLOCK_M;
+            *block_col = (offset_n + col) * BLOCK_N;
             return;
         }
 
-        // Calculate how many complete Hilbert squares fit in each dimension
-        const int squares_m = grid_m / hilbert_size;
-        const int squares_n = grid_n / hilbert_size;
+        // For power-of-2 regions, use Hilbert mapping
+        const int hilbert_size     = min(region_m, region_n);
+        const int tiles_per_square = hilbert_size * hilbert_size;
 
-        // Total tiles in the Hilbert region (complete squares only)
-        const int tiles_per_square    = hilbert_size * hilbert_size;
-        const int total_hilbert_tiles = squares_m * squares_n * tiles_per_square;
+        // Calculate how many complete Hilbert squares fit
+        const int squares_in_m         = region_m / hilbert_size;
+        const int squares_in_n         = region_n / hilbert_size;
+        const int total_complete_tiles = squares_in_m * squares_in_n * tiles_per_square;
 
-        if(tile_id < total_hilbert_tiles)
+        if(tile_id < total_complete_tiles)
         {
             // Main Hilbert region
             const int square_id     = tile_id / tiles_per_square;
-            const int square_row    = square_id / squares_n;
-            const int square_col    = square_id % squares_n;
+            const int square_row    = square_id / squares_in_n;
+            const int square_col    = square_id % squares_in_n;
             const int local_tile_id = tile_id % tiles_per_square;
 
             int i, j;
             hilbert_coords(local_tile_id, hilbert_size, &i, &j);
 
-            *block_row = (square_row * hilbert_size + i) * BLOCK_M;
-            *block_col = (square_col * hilbert_size + j) * BLOCK_N;
+            *block_row = (offset_m + square_row * hilbert_size + i) * BLOCK_M;
+            *block_col = (offset_n + square_col * hilbert_size + j) * BLOCK_N;
         }
         else
         {
-            // Remainder regions use row-major
-            int remainder_id = tile_id - total_hilbert_tiles;
+            // Handle remainder regions recursively
+            int remainder_id = tile_id - total_complete_tiles;
 
-            // Calculate remainder dimensions
-            const int hilbert_region_m = squares_m * hilbert_size;
-            const int hilbert_region_n = squares_n * hilbert_size;
-            const int remainder_m      = grid_m - hilbert_region_m;
-            const int remainder_n      = grid_n - hilbert_region_n;
+            const int remainder_m = region_m % hilbert_size;
+            const int remainder_n = region_n % hilbert_size;
 
-            // Right strip: spans full hilbert_region_m rows, remainder_n columns
-            const int right_strip_tiles = hilbert_region_m * remainder_n;
+            // Right remainder strip (if region_n doesn't divide evenly)
+            const int right_remainder_tiles = squares_in_m * hilbert_size * remainder_n;
 
-            if(remainder_id < right_strip_tiles && remainder_n > 0)
+            if(remainder_id < right_remainder_tiles && remainder_n > 0)
             {
-                // Right strip
-                const int strip_row = remainder_id / remainder_n;
-                const int strip_col = remainder_id % remainder_n;
+                // Recursively handle right strip
+                const int strip_row      = remainder_id / remainder_n;
+                const int strip_local_id = remainder_id % remainder_n;
 
-                *block_row = strip_row * BLOCK_M;
-                *block_col = (hilbert_region_n + strip_col) * BLOCK_N;
+                hilbert_recursive_mapping(strip_local_id,
+                                          1,
+                                          remainder_n,
+                                          offset_m + strip_row,
+                                          offset_n + squares_in_n * hilbert_size,
+                                          block_row,
+                                          block_col);
             }
             else
             {
-                // Bottom region
-                remainder_id -= right_strip_tiles;
+                // Bottom remainder region (including corner)
+                remainder_id -= right_remainder_tiles;
+                const int bottom_width = region_n; // Full width for bottom strip
 
-                const int bottom_width = grid_n;
-                const int bottom_row   = remainder_id / bottom_width;
-                const int bottom_col   = remainder_id % bottom_width;
-
-                *block_row = (hilbert_region_m + bottom_row) * BLOCK_M;
-                *block_col = bottom_col * BLOCK_N;
+                hilbert_recursive_mapping(remainder_id,
+                                          remainder_m,
+                                          bottom_width,
+                                          offset_m + squares_in_m * hilbert_size,
+                                          offset_n,
+                                          block_row,
+                                          block_col);
             }
         }
+    }
+
+public:
+    static __device__ __forceinline__ void
+        map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
+    {
+        hilbert_recursive_mapping(tile_id, grid_m, grid_n, 0, 0, block_row, block_col);
     }
 };
 

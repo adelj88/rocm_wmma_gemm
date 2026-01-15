@@ -79,6 +79,10 @@ Run the executable after building:
 ./benchmark/bench_float_half
 ./benchmark/bench_half_half
 
+# Pass custom sizes
+./benchmark/bench_half_half --shapes 4096,4096,2048:4096,5120,5120
+./benchmark/bench_half_half --shapes 2048:4096 # passes squares
+
 # To run rocblas equivalent for verification
 ./test/test_rocblas
 ./benchmark/bench_rocblas

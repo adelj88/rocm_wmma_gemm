@@ -230,42 +230,25 @@ __global__ __launch_bounds__(warp_size* warps_m* warps_n) void kernel_gemm(
         const U* curr_a = current_a + warp_offset_A;
         const U* curr_b = current_b + warp_offset_B;
 
-        if constexpr(warp_tile_m < warp_tile_n)
+        auto load_ab = [&]<size_t wt>()
         {
-            for(int wm = 0; wm < warp_tile_n; ++wm)
+            if constexpr(wt < warp_tile_m)
             {
-                if(wm < warp_tile_m)
-                {
-                    load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], curr_a, block_m, stride_a);
-                    curr_a += frag_offset_A;
-                }
-                load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, stride_b, block_n);
-                curr_b += frag_offset_B;
-            }
-        }
-        else if constexpr(warp_tile_m > warp_tile_n)
-        {
-            for(int wm = 0; wm < warp_tile_m; ++wm)
-            {
-                load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], curr_a, block_m, stride_a);
-                if(wm < warp_tile_n)
-                {
-                    load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, stride_b, block_n);
-                    curr_b += frag_offset_B;
-                }
+                load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wt], curr_a, block_m, stride_a);
                 curr_a += frag_offset_A;
             }
-        }
-        else if constexpr(warp_tile_m == warp_tile_n)
-        {
-            for(int wm = 0; wm < warp_tile_m; ++wm)
+
+            if constexpr(wt < warp_tile_n)
             {
-                load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wm], curr_a, block_m, stride_a);
-                load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wm], curr_b, stride_b, block_n);
-                curr_a += frag_offset_A;
+                load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wt], curr_b, stride_b, block_n);
                 curr_b += frag_offset_B;
             }
-        }
+        };
+
+        constexpr int wt_max = warp_tile_m > warp_tile_n ? warp_tile_m : warp_tile_n;
+
+        [&]<size_t... wt>(std::index_sequence<wt...>)
+        { (load_ab.template operator()<wt>(), ...); }(std::make_index_sequence<wt_max>{});
 
         // Compute: each warp performs WMMA on its fragments.
         for(int wm = 0; wm < warp_tile_m; ++wm)

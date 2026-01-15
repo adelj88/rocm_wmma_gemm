@@ -171,6 +171,7 @@ namespace detail
     code += """    }};
 
     // Find closest configuration when exact match not found
+    // Strategy: Match K first (primary), then find closest M,N (secondary)
     constexpr size_t find_closest_config(size_t m, size_t n, size_t k,
                                          m_layout layout_a,
                                          m_layout layout_b,
@@ -182,18 +183,82 @@ namespace detail
             return DEFAULT_CONFIG_IDX;
         }
 
-        // Logarithmic distance metric (better for matrix operations)
-        auto size_distance = [](size_t m1, size_t n1, size_t k1,
-                               size_t m2, size_t n2, size_t k2) -> double
+        // Euclidean distance for M,N dimensions only
+        auto mn_distance = [](size_t m1, size_t n1, size_t m2, size_t n2) -> double
         {
-            double log_diff_m = std::log2(static_cast<double>(m1)) - std::log2(static_cast<double>(m2));
-            double log_diff_n = std::log2(static_cast<double>(n1)) - std::log2(static_cast<double>(n2));
-            double log_diff_k = std::log2(static_cast<double>(k1)) - std::log2(static_cast<double>(k2));
-            return log_diff_m * log_diff_m + log_diff_n * log_diff_n + log_diff_k * log_diff_k;
+            double diff_m = static_cast<double>(m1) - static_cast<double>(m2);
+            double diff_n = static_cast<double>(n1) - static_cast<double>(n2);
+            return diff_m * diff_m + diff_n * diff_n;
         };
 
-        // Find config with exact matching (A,B,C) layout and closest size
-        double min_distance = std::numeric_limits<double>::max();
+        // Step 1: Find the closest K value for the matching layout
+        size_t closest_k = 0;
+        size_t min_k_diff = std::numeric_limits<size_t>::max();
+        bool found_layout_match = false;
+
+        for(size_t i = 0; i < sorted_config_map.size(); ++i)
+        {
+            const auto& entry = sorted_config_map[i];
+            const auto& key = entry.first;
+
+            // Only consider configs with matching layout
+            if(key.layout_a == layout_a && key.layout_b == layout_b && key.layout_c == layout_c)
+            {
+                found_layout_match = true;
+                size_t k_diff = (key.k > k) ? (key.k - k) : (k - key.k);
+                if(k_diff < min_k_diff)
+                {
+                    min_k_diff = k_diff;
+                    closest_k = key.k;
+                }
+            }
+        }
+
+        // If we found configs with matching layout
+        if(found_layout_match)
+        {
+            // Step 2: Among configs with closest K and matching layout, find closest M,N
+            double min_mn_distance = std::numeric_limits<double>::max();
+            size_t best_idx = DEFAULT_CONFIG_IDX;
+
+            for(size_t i = 0; i < sorted_config_map.size(); ++i)
+            {
+                const auto& entry = sorted_config_map[i];
+                const auto& key = entry.first;
+
+                // Only consider configs with matching layout and closest K
+                if(key.layout_a == layout_a && key.layout_b == layout_b && 
+                   key.layout_c == layout_c && key.k == closest_k)
+                {
+                    double dist = mn_distance(m, n, key.m, key.n);
+                    if(dist < min_mn_distance)
+                    {
+                        min_mn_distance = dist;
+                        best_idx = i;
+                    }
+                }
+            }
+
+            return sorted_config_map[best_idx].second;
+        }
+
+        // Fallback: No matching layout found, find closest K then M,N regardless of layout
+        closest_k = 0;
+        min_k_diff = std::numeric_limits<size_t>::max();
+
+        for(size_t i = 0; i < sorted_config_map.size(); ++i)
+        {
+            const auto& key = sorted_config_map[i].first;
+            size_t k_diff = (key.k > k) ? (key.k - k) : (k - key.k);
+            if(k_diff < min_k_diff)
+            {
+                min_k_diff = k_diff;
+                closest_k = key.k;
+            }
+        }
+
+        // Find closest M,N among configs with closest K
+        double min_mn_distance = std::numeric_limits<double>::max();
         size_t best_idx = DEFAULT_CONFIG_IDX;
 
         for(size_t i = 0; i < sorted_config_map.size(); ++i)
@@ -201,36 +266,14 @@ namespace detail
             const auto& entry = sorted_config_map[i];
             const auto& key = entry.first;
 
-            // Check if (A,B,C) layout matches exactly
-            if(key.layout_a == layout_a && key.layout_b == layout_b && key.layout_c == layout_c)
+            if(key.k == closest_k)
             {
-                double dist = size_distance(m, n, k, key.m, key.n, key.k);
-                if(dist < min_distance)
+                double dist = mn_distance(m, n, key.m, key.n);
+                if(dist < min_mn_distance)
                 {
-                    min_distance = dist;
+                    min_mn_distance = dist;
                     best_idx = i;
                 }
-            }
-        }
-
-        // If we found a match with right (A,B,C) layout, return it
-        if(min_distance < std::numeric_limits<double>::max())
-        {
-            return sorted_config_map[best_idx].second;
-        }
-
-        // Fallback: find closest size regardless of layout
-        min_distance = std::numeric_limits<double>::max();
-
-        for(size_t i = 0; i < sorted_config_map.size(); ++i)
-        {
-            const auto& entry = sorted_config_map[i];
-            const auto& key = entry.first;
-            double dist = size_distance(m, n, k, key.m, key.n, key.k);
-            if(dist < min_distance)
-            {
-                min_distance = dist;
-                best_idx = i;
             }
         }
 
@@ -702,3 +745,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    

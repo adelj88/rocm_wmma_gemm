@@ -164,6 +164,7 @@ struct config_params
     int         warps_n;
     int         warp_tile_m;
     int         warp_tile_n;
+    int         swizzle;
     int         bits;
     bool        buffer_first;
     bool        use_async;
@@ -193,19 +194,16 @@ std::string generate_kernel_source(const config_params& config)
 namespace rocm_wmma_gemm
 {
 
-// Extern template declaration - this IS the kernel we'll call
-template __global__ __launch_bounds__()"
-                  << (rocm_wmma_gemm::warp_size * config.warps_m * config.warps_n)
-                  << R"() void kernel_gemm<half, half, )"
+// Explicit instantiation of the struct static member
+template struct kernel_gemm_impl<half, half, )"
                   << (config.layout_c == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
-                  << config.warp_tile_n << ", " << config.bits << ", "
+                  << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits << ", "
                   << (config.buffer_first ? "true" : "false") << ", "
                   << (config.use_async ? "true" : "false") << ", "
-                  << (config.use_direct_write ? "true" : "false") << R"(>(
-    half* C, const half* A, const half* B, int M, int N, int K);
+                  << (config.use_direct_write ? "true" : "false") << R"(>;
 
 } // namespace rocm_wmma_gemm
 )";
@@ -294,7 +292,7 @@ bool compile_kernel(const config_params& config)
 
     // Build the full template instantiation string for name expression
     std::stringstream kernel_name_ss;
-    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm<half, half, "
+    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm_impl<half, half, "
                    << (config.layout_c == 0 ? "rocm_wmma_gemm::m_layout::row_major"
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", "
@@ -304,10 +302,10 @@ bool compile_kernel(const config_params& config)
                    << (config.layout_b == 0 ? "rocm_wmma_gemm::m_layout::row_major"
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
-                   << ", " << config.warp_tile_n << ", " << config.bits << ", "
-                   << (config.buffer_first ? "true" : "false") << ", "
+                   << ", " << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits
+                   << ", " << (config.buffer_first ? "true" : "false") << ", "
                    << (config.use_async ? "true" : "false") << ", "
-                   << (config.use_direct_write ? "true" : "false") << ">";
+                   << (config.use_direct_write ? "true" : "false") << ">::run";
 
     std::string kernel_name = kernel_name_ss.str();
     std::cout << "Adding name expression: " << kernel_name << std::endl;
@@ -442,16 +440,16 @@ void run_kernel_benchmark(benchmark::State& state)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 16)
+    if(argc != 17)
     {
         std::cerr << "Usage: " << argv[0]
-                  << " M N K warps_m warps_n warp_tile_m warp_tile_n bits"
-                     "buffer_first"
-                     "use async"
+                  << " M N K warps_m warps_n warp_tile_m warp_tile_n swizzle bits "
+                     "buffer_first "
+                     "use_async "
                      "use_direct_write "
                      "layout_a layout_b layout_c gpu_arch"
                   << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 256 1 0 1 0 1 0 gfx1100"
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 8 256 1 0 1 0 1 0 gfx1100"
                   << std::endl;
         return 1;
     }
@@ -465,14 +463,15 @@ int main(int argc, char* argv[])
     g_config.warps_n          = std::atoi(argv[5]);
     g_config.warp_tile_m      = std::atoi(argv[6]);
     g_config.warp_tile_n      = std::atoi(argv[7]);
-    g_config.bits             = std::atoi(argv[8]);
-    g_config.buffer_first     = (std::atoi(argv[9]) != 0);
-    g_config.use_async        = (std::atoi(argv[10]) != 0);
-    g_config.use_direct_write = (std::atoi(argv[11]) != 0);
-    g_config.layout_a         = std::atoi(argv[12]);
-    g_config.layout_b         = std::atoi(argv[13]);
-    g_config.layout_c         = std::atoi(argv[14]);
-    std::string tmp           = argv[15];
+    g_config.swizzle          = std::atoi(argv[8]);
+    g_config.bits             = std::atoi(argv[9]);
+    g_config.buffer_first     = (std::atoi(argv[10]) != 0);
+    g_config.use_async        = (std::atoi(argv[11]) != 0);
+    g_config.use_direct_write = (std::atoi(argv[12]) != 0);
+    g_config.layout_a         = std::atoi(argv[13]);
+    g_config.layout_b         = std::atoi(argv[14]);
+    g_config.layout_c         = std::atoi(argv[15]);
+    std::string tmp           = argv[16];
     g_config.gpu_arch         = "--offload-arch=" + tmp;
 
     // Initialize test data
@@ -487,9 +486,10 @@ int main(int argc, char* argv[])
 
     std::cout << "Successfully compiled kernel for config: " << g_config.warps_m << ","
               << g_config.warps_n << "," << g_config.warp_tile_m << "," << g_config.warp_tile_n
-              << "," << g_config.bits << "," << g_config.buffer_first << "," << g_config.use_async
-              << "," << g_config.use_direct_write << "," << g_config.layout_a << ","
-              << g_config.layout_b << "," << g_config.layout_c << std::endl;
+              << "," << g_config.swizzle << "," << g_config.bits << "," << g_config.buffer_first
+              << "," << g_config.use_async << "," << g_config.use_direct_write << ","
+              << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
+              << std::endl;
 
     // Initialize benchmark
     benchmark::Initialize(&argc, argv);
@@ -498,7 +498,7 @@ int main(int argc, char* argv[])
     benchmark::RegisterBenchmark("dynamic_kernel", run_kernel_benchmark)
         ->UseManualTime()
         ->Unit(benchmark::kMillisecond)
-        ->Repetitions(1) // Repeat 5 times
+        ->Repetitions(1) // Repeat N time
         ->ReportAggregatesOnly(true);
 
     // Run benchmark

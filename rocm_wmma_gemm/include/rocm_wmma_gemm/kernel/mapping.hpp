@@ -29,143 +29,6 @@ namespace rocm_wmma_gemm
 {
 
 /**
- * @brief Hilbert curve tile mapping
- */
-template<int BLOCK_M, int BLOCK_N>
-class hilbert_mapping
-{
-private:
-    static __device__ __forceinline__ int largest_power_of_2(int n)
-    {
-        constexpr int total_bits = sizeof(int) * 8;
-        return 1 << ((total_bits - 1) - __clz(n));
-    }
-
-    static __device__ __forceinline__ bool is_power_of_2(int n)
-    {
-        return n > 0 && (n & (n - 1)) == 0;
-    }
-
-    static __device__ __forceinline__ void
-        hilbert_coords(int local_tile_id, int hilbert_size, int* i, int* j)
-    {
-        *i    = 0;
-        *j    = 0;
-        int t = local_tile_id;
-
-        for(int k = 1; k < hilbert_size; k <<= 1)
-        {
-            int bi = 1 & (t >> 1);
-            int bj = 1 & (t ^ bi);
-            if(bj == 0)
-            {
-                if(bi == 1)
-                {
-                    *i = k - 1 - *i; // flip up-down
-                    *j = k - 1 - *j; // flip left-right
-                }
-                int tmp = *i; // transpose
-                *i      = *j;
-                *j      = tmp;
-            }
-            *i += k * bi;
-            *j += k * bj;
-            t >>= 2;
-        }
-    }
-
-    static __device__ __forceinline__ void hilbert_recursive_mapping(int  tile_id,
-                                                                     int  region_m,
-                                                                     int  region_n,
-                                                                     int  offset_m,
-                                                                     int  offset_n,
-                                                                     int* block_row,
-                                                                     int* block_col)
-    {
-        // Base case: fall back to row-major for small or non-power-of-2 regions
-        if(region_m == 1 || region_n == 1 || !is_power_of_2(region_m) || !is_power_of_2(region_n))
-        {
-            int row    = tile_id / region_n;
-            int col    = tile_id % region_n;
-            *block_row = (offset_m + row) * BLOCK_M;
-            *block_col = (offset_n + col) * BLOCK_N;
-            return;
-        }
-
-        // For power-of-2 regions, use Hilbert mapping
-        const int hilbert_size     = min(region_m, region_n);
-        const int tiles_per_square = hilbert_size * hilbert_size;
-
-        // Calculate how many complete Hilbert squares fit
-        const int squares_in_m         = region_m / hilbert_size;
-        const int squares_in_n         = region_n / hilbert_size;
-        const int total_complete_tiles = squares_in_m * squares_in_n * tiles_per_square;
-
-        if(tile_id < total_complete_tiles)
-        {
-            // Main Hilbert region
-            const int square_id     = tile_id / tiles_per_square;
-            const int square_row    = square_id / squares_in_n;
-            const int square_col    = square_id % squares_in_n;
-            const int local_tile_id = tile_id % tiles_per_square;
-
-            int i, j;
-            hilbert_coords(local_tile_id, hilbert_size, &i, &j);
-
-            *block_row = (offset_m + square_row * hilbert_size + i) * BLOCK_M;
-            *block_col = (offset_n + square_col * hilbert_size + j) * BLOCK_N;
-        }
-        else
-        {
-            // Handle remainder regions recursively
-            int remainder_id = tile_id - total_complete_tiles;
-
-            const int remainder_m = region_m % hilbert_size;
-            const int remainder_n = region_n % hilbert_size;
-
-            // Right remainder strip (if region_n doesn't divide evenly)
-            const int right_remainder_tiles = squares_in_m * hilbert_size * remainder_n;
-
-            if(remainder_id < right_remainder_tiles && remainder_n > 0)
-            {
-                // Recursively handle right strip
-                const int strip_row      = remainder_id / remainder_n;
-                const int strip_local_id = remainder_id % remainder_n;
-
-                hilbert_recursive_mapping(strip_local_id,
-                                          1,
-                                          remainder_n,
-                                          offset_m + strip_row,
-                                          offset_n + squares_in_n * hilbert_size,
-                                          block_row,
-                                          block_col);
-            }
-            else
-            {
-                // Bottom remainder region (including corner)
-                remainder_id -= right_remainder_tiles;
-                const int bottom_width = region_n; // Full width for bottom strip
-
-                hilbert_recursive_mapping(remainder_id,
-                                          remainder_m,
-                                          bottom_width,
-                                          offset_m + squares_in_m * hilbert_size,
-                                          offset_n,
-                                          block_row,
-                                          block_col);
-            }
-        }
-    }
-
-public:
-    static __device__ __forceinline__ void
-        map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
-    {
-        hilbert_recursive_mapping(tile_id, grid_m, grid_n, 0, 0, block_row, block_col);
-    }
-};
-
-/**
  * @brief Row-major tile mapping
  */
 template<int BLOCK_M, int BLOCK_N>
@@ -175,11 +38,9 @@ public:
     static __device__ __forceinline__ void
         map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
     {
-        // Basic row-major calculation
         int row = tile_id / grid_n;
         int col = tile_id % grid_n;
 
-        // Convert to actual block coordinates
         *block_row = row * BLOCK_M;
         *block_col = col * BLOCK_N;
     }
@@ -195,38 +56,242 @@ public:
     static __device__ __forceinline__ void
         map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
     {
-        // Basic column-major calculation
         int col = tile_id / grid_m;
         int row = tile_id % grid_m;
 
-        // Convert to actual block coordinates
         *block_row = row * BLOCK_M;
         *block_col = col * BLOCK_N;
     }
 };
 
 /**
- * @brief Selector for tile mapping implementation based on layouts
+ * @brief Fast Snake Row-Swizzle with XOR Skew
+ *
+ * This mapping optimizes L2 cache hit rates for GEMM operations by altering the order
+ * in which thread blocks process output tiles. It uses three main techniques:
+ *
+ * 1. 2D Swizzling (Intra-band locality):
+ *    Instead of processing a thin 1D row of tiles, consecutive blocks process a 2D
+ *    patch (height = SWIZZLE_M). This allows concurrent blocks to share loads from
+ *    Matrix A (same M) and Matrix B (same N) in the L2 cache.
+ *
+ * 2. Snake Traversal (Inter-band locality):
+ *    When finishing one horizontal band and moving to the next, a standard mapping
+ *    jumps from N=max back to N=0, causing Matrix B to be evicted from L2.
+ *    The snake traversal reverses the N-direction on odd bands, keeping Matrix B
+ *    in the L2 cache across band boundaries.
+ *
+ *    Macro Traversal Visualization (Grid divided into bands of SWIZZLE_M):
+ *    Band 0 (m_outer=0): [0] -> [1] -> [2] -> [3]  (N increases)
+ *                                               |
+ *    Band 1 (m_outer=1): [7] <- [6] <-[5] <- [4]  (N decreases, reuses B at edge)
+ *                         |
+ *    Band 2 (m_outer=2): [8] -> [9] -> [10]-> [11] (N increases)
+ *
+ * 3. XOR Skew (Partition Camping Avoidance):
+ *    If concurrent blocks process the exact same M-coordinates simultaneously, they
+ *    may hammer the same memory partitions/banks, causing queuing delays. The XOR
+ *    skew staggers the inner M traversal based on the N coordinate.
+ *
+ *    Micro Traversal Visualization (SWIZZLE_M = 4):
+ *    Without XOR (inner_m):          With XOR (inner_m ^ (final_n % 4)):
+ *    final_n:  0   1   2   3         final_n:  0   1   2   3
+ *           +----------------               +----------------
+ *    pos 0  |  0   0   0   0         pos 0  |  0   1   2   3
+ *    pos 1  |  1   1   1   1         pos 1  |  1   0   3   2
+ *    pos 2  |  2   2   2   2         pos 2  |  2   3   0   1
+ *    pos 3  |  3   3   3   3         pos 3  |  3   2   1   0
+ *
+ *    Result: Concurrent blocks (e.g., final_n 0,1,2,3 at pos 0) access M-indices
+ *    0, 1, 2, and 3 respectively, perfectly distributing the load across memory banks.
  */
-template<m_layout LAYOUT_A, m_layout LAYOUT_B>
-struct select_tile_mapping_impl
+template<int BLOCK_M, int BLOCK_N, int SWIZZLE_M = 8>
+class xor_snake_row_swizzle_mapping
 {
-    template<int BLOCK_M, int BLOCK_N>
-    using type = hilbert_mapping<BLOCK_M, BLOCK_N>;
+    static_assert((SWIZZLE_M & (SWIZZLE_M - 1)) == 0, "SWIZZLE_M must be a power of 2");
+
+public:
+    static __device__ __forceinline__ void
+        map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
+    {
+        const int idx_n = tile_id % grid_n;
+        const int idx_m = tile_id / grid_n;
+
+        const int m_outer = idx_m / SWIZZLE_M;
+        const int m_inner = idx_m % SWIZZLE_M;
+
+        int final_m, final_n;
+
+        // Fast path for main complete groups
+        if(m_outer < grid_m / SWIZZLE_M)
+        {
+            const int local = idx_n + m_inner * grid_n;
+            final_n         = local / SWIZZLE_M;
+
+            // XOR SKEW: Stagger the inner M traversal based on the N coordinate
+            int inner_m = local % SWIZZLE_M;
+            inner_m     = inner_m ^ (final_n & (SWIZZLE_M - 1));
+
+            final_m = inner_m + m_outer * SWIZZLE_M;
+        }
+        // Slow path for the remainder edge (No XOR to prevent out-of-bounds)
+        else
+        {
+            const int m_rem = grid_m % SWIZZLE_M;
+            const int local = idx_n + m_inner * grid_n;
+            final_n         = local / m_rem;
+            final_m         = (local % m_rem) + m_outer * SWIZZLE_M;
+        }
+
+        // MACRO TRAVERSAL: Snake (Boustrophedon)
+        if(m_outer & 1)
+        {
+            final_n = grid_n - 1 - final_n;
+        }
+
+        if(final_m >= grid_m || final_n >= grid_n)
+        {
+            *block_row = (grid_m - 1) * BLOCK_M;
+            *block_col = (grid_n - 1) * BLOCK_N;
+            return;
+        }
+
+        *block_row = final_m * BLOCK_M;
+        *block_col = final_n * BLOCK_N;
+    }
 };
 
-template<>
-struct select_tile_mapping_impl<m_layout::row_major, m_layout::row_major>
+/**
+ * @brief Fast Snake Column-Swizzle with XOR Skew
+ *
+ * This is the transposed equivalent of the row-swizzle mapping, optimized for
+ * column-major grid layouts. It groups tiles into vertical bands of width SWIZZLE_N.
+ *
+ * 1. 2D Swizzling: Groups tiles into SWIZZLE_N wide vertical bands to maximize
+ *    L2 cache sharing of Matrix A and Matrix B among concurrent thread blocks.
+ *
+ * 2. Snake Traversal:
+ *    Reverses the M-direction on odd vertical bands to ensure Matrix A remains
+ *    in the L2 cache when transitioning between bands.
+ *
+ *    Macro Traversal Visualization (Grid divided into bands of SWIZZLE_N):
+ *    Band 0       Band 1       Band 2
+ *    (n_outer=0)  (n_outer=1)  (n_outer=2)
+ *       [0]          [7]          [8]
+ *        |            ^            |
+ *       [1]          [6]          [9]
+ *        |            ^            |
+ *       [2]          [5]         [10]
+ *        |            ^            |
+ *       [3] -> -> -> [4]         [11]
+ *
+ * 3. XOR Skew:
+ *    Staggers the inner N traversal based on the M coordinate to prevent partition
+ *    camping. Without this, concurrent blocks might access the same N-coordinates
+ *    simultaneously, causing memory bank conflicts.
+ *
+ *    Micro Traversal Visualization (SWIZZLE_N = 4):
+ *    Without XOR (inner_n):          With XOR (inner_n ^ (final_m % 4)):
+ *    final_m:  0   1   2   3         final_m:  0   1   2   3
+ *           +----------------               +----------------
+ *    pos 0  |  0   0   0   0         pos 0  |  0   1   2   3
+ *    pos 1  |  1   1   1   1         pos 1  |  1   0   3   2
+ *    pos 2  |  2   2   2   2         pos 2  |  2   3   0   1
+ *    pos 3  |  3   3   3   3         pos 3  |  3   2   1   0
+ */
+template<int BLOCK_M, int BLOCK_N, int SWIZZLE_N = 8>
+class xor_snake_col_swizzle_mapping
+{
+    static_assert((SWIZZLE_N & (SWIZZLE_N - 1)) == 0, "SWIZZLE_N must be a power of 2");
+
+public:
+    static __device__ __forceinline__ void
+        map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col)
+    {
+        const int idx_m = tile_id % grid_m;
+        const int idx_n = tile_id / grid_m;
+
+        const int n_outer = idx_n / SWIZZLE_N;
+        const int n_inner = idx_n % SWIZZLE_N;
+
+        int final_m, final_n;
+
+        // Fast path for main complete groups
+        if(n_outer < grid_n / SWIZZLE_N)
+        {
+            const int local = idx_m + n_inner * grid_m;
+            final_m         = local / SWIZZLE_N;
+
+            // XOR SKEW: Stagger the inner N traversal based on the M coordinate
+            int inner_n = local % SWIZZLE_N;
+            inner_n     = inner_n ^ (final_m & (SWIZZLE_N - 1));
+
+            final_n = inner_n + n_outer * SWIZZLE_N;
+        }
+        // Slow path for the remainder edge (No XOR to prevent out-of-bounds)
+        else
+        {
+            const int n_rem = grid_n % SWIZZLE_N;
+            const int local = idx_m + n_inner * grid_m;
+            final_m         = local / n_rem;
+            final_n         = (local % n_rem) + n_outer * SWIZZLE_N;
+        }
+
+        // MACRO TRAVERSAL: Snake (Boustrophedon)
+        if(n_outer & 1)
+        {
+            final_m = grid_m - 1 - final_m;
+        }
+
+        if(final_m >= grid_m || final_n >= grid_n)
+        {
+            *block_row = (grid_m - 1) * BLOCK_M;
+            *block_col = (grid_n - 1) * BLOCK_N;
+            return;
+        }
+
+        *block_row = final_m * BLOCK_M;
+        *block_col = final_n * BLOCK_N;
+    }
+};
+
+/**
+ * @brief Selector for tile mapping implementation based on layouts
+ */
+template<m_layout LAYOUT_A, m_layout LAYOUT_B, int SWIZZLE>
+struct select_tile_mapping_impl
 {
     template<int BLOCK_M, int BLOCK_N>
     using type = row_major_mapping<BLOCK_M, BLOCK_N>;
 };
 
-template<int BLOCK_M, int BLOCK_N, m_layout LAYOUT_A, m_layout LAYOUT_B>
+template<int SWIZZLE>
+struct select_tile_mapping_impl<m_layout::col_major, m_layout::row_major, SWIZZLE>
+{
+    template<int BLOCK_M, int BLOCK_N>
+    using type = xor_snake_col_swizzle_mapping<BLOCK_M, BLOCK_N, SWIZZLE>;
+};
+
+template<int SWIZZLE>
+struct select_tile_mapping_impl<m_layout::row_major, m_layout::col_major, SWIZZLE>
+{
+    template<int BLOCK_M, int BLOCK_N>
+    using type = xor_snake_row_swizzle_mapping<BLOCK_M, BLOCK_N, SWIZZLE>;
+};
+
+template<int SWIZZLE>
+struct select_tile_mapping_impl<m_layout::col_major, m_layout::col_major, SWIZZLE>
+{
+    template<int BLOCK_M, int BLOCK_N>
+    using type = xor_snake_col_swizzle_mapping<BLOCK_M, BLOCK_N, SWIZZLE>;
+};
+
+template<int BLOCK_M, int BLOCK_N, m_layout LAYOUT_A, m_layout LAYOUT_B, int SWIZZLE>
 class tile_mapper
 {
     using base_type =
-        typename select_tile_mapping_impl<LAYOUT_A, LAYOUT_B>::template type<BLOCK_M, BLOCK_N>;
+        typename select_tile_mapping_impl<LAYOUT_A, LAYOUT_B, SWIZZLE>::template type<BLOCK_M,
+                                                                                      BLOCK_N>;
 
 public:
     __device__ __forceinline__ void

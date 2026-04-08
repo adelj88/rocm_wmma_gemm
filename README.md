@@ -41,11 +41,10 @@ Testing on AMD RX 7900 GRE (gfx1100) and 8060S (gfx1151) reveals distinct perfor
 ### Prerequisites
 - AMD ROCm installed with HIP support
 - CMake version 3.10 or higher
-- Python3 (required for config generation and tuning)
+- Python3
   - Python packages (can be installed with pip or conda)
-    - ``numpy``
-    - ``optuna``
-    - ``matplotlib``
+    - ``numpy`` (required for docs/report generation)
+    - ``matplotlib`` (required for docs/report generation)
 - AMD RDNA3/RDNA3.5 GPU (required for WMMA support)
 
 ### Build Steps
@@ -89,32 +88,33 @@ Run the executable after building:
 ```
 
 ### Automatic Kernel Tuning
-The library includes an Optuna-based Tree-structured Parzen Estimator (TPE) tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts.
+The library includes a **Parameter-less GOMEA** (Gene-pool Optimal Mixing Evolutionary Algorithm) tuner that automatically finds optimal kernel configurations for different matrix sizes and data layouts. GPU tuning has strong epistasis (parameters interact heavily), making this evolutionary approach highly effective.
 
 #### **Tuning Approach**
-The tuner uses **Optuna TPE (Tree-structured Parzen Estimators)** to efficiently explore the discrete parameter space:
+The tuner leverages advanced mechanics to efficiently explore the discrete parameter space:
 
-- **TPE optimization**: Models the performance landscape using probabilistic distributions to intelligently sample promising regions
-- **Smart initialization**: Tests proven baseline configurations first to seed the optimization with known good solutions
-- **Multivariate learning**: Understands relationships between parameters (e.g., block sizes and tile configurations)
-- **Adaptive sampling**: Balances exploration of uncertain regions with exploitation of high-performing areas
-- **Reproducible results**: Uses configurable random seeds for consistent and repeatable tuning runs
+- **Niching (Hall of Fame)**: Maintains diverse elites globally and locally to preserve diverse lineages and avoid falling into local optima.
+- **Global Elite Linkage Learning (FOS)**: Calculates Mutual Information to mathematically prove which parameters must move together (e.g., specific booleans that work well together).
+- **Interleaved Multi-Start (IMS)**: A parameter-less population sizing approach that spawns concurrent populations of increasing sizes.
+- **Descending Stratified Initialization**: Intelligently seeds new populations by testing the largest valid block sizes first, preventing wasted budget.
+- **Layout Sharing & Competitive Baselines**: Reuses row-major C configurations as baselines for column-major C runs, racing them against input files to potentially halve the evaluation budget.
+- **Multi-Niche Seeding**: Injects the entire Global Hall of Fame into newly spawned populations to give them a massive, diverse head start.
 
 To run the tuner:
 ```bash
 cd build
 
-# Default behavior (all sizes and layouts)
+# Default behavior (standard benchmark sizes and all layouts)
 python3 tune.py # Results written to gemm_config_tuned.json
 
 # Test specific sizes
 python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
 
-# Adjust evaluation budget
+# Adjust evaluation budget per layout
 python3 tune.py --budget 100
 
-# Test specific layouts
-python3 tune.py --layouts r,c c,c
+# Test specific layouts (e.g., row,col,row and col,col,col)
+python3 tune.py --layouts r,c,r c,c,c
 
 # Reproducible results with specific seed
 python3 tune.py --seed 123
@@ -122,11 +122,38 @@ python3 tune.py --seed 123
 # Different GPU architecture
 python3 tune.py --gpu-arch gfx1103
 
+# Resume tuning using an existing config as a baseline
+python3 tune.py --input gemm_config.json
+
+# Force overwrite existing configs (don't use them as baseline)
+python3 tune.py --input gemm_config.json --overwrite
+
 # Custom output file
 python3 tune.py --output my_config.json
+```
 
-# Custom baseline configurations
-python3 tune.py --baselines 4,4,4,4,256,0,0 2,2,4,4,128,1,1 8,2,2,2,64,1,0
+### Configuration Racing
+The library includes a WMMA configuration racing tool (`race.py`) to competitively compare kernel configurations against each other and verify the best performer.
+
+#### **Racing Modes**
+- **File vs File Racing**: Compares two configuration JSON files and outputs a new merged configuration containing only the best performing configs.
+- **Cross-Layout Sanity Check**: For a given matrix size and A/B layout, it verifies if the row-major C configuration is genuinely faster than the column-major C configuration (and vice versa) by evaluating both configurations on both output layouts.
+
+To run the racer:
+```bash
+cd build
+
+# Race two config files against each other (saves best to gemm_config_raced.json)
+python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json
+
+# Run a cross-layout sanity check on a single config file
+python3 race.py --config1 gemm_config.json --cross-check
+
+# Adjust number of benchmark repetitions to find the median (default is 5)
+python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json --repeats 10
+
+# Custom output file
+python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json --output winner.json
 ```
 
 ## Performance Results

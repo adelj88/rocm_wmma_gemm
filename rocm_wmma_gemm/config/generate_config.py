@@ -15,12 +15,13 @@ def generate_config_header(config_file, output_file):
         cfg = conf['config']
         unique_configs.add((cfg['warps_m'], cfg['warps_n'],
                             cfg['warp_tile_m'], cfg['warp_tile_n'],
+                            cfg['swizzle'],
                             cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write']))
 
     # Always add default configs if not present
     default_configs = [
-        (4, 4, 4, 4, 256, True, True, False),
-        (4, 4, 4, 4, 256, True, True, True)
+        (4, 4, 4, 4, 8, 256, True, True, False),
+        (4, 4, 4, 4, 8, 256, True, True, True)
     ]
     for default_config in default_configs:
         if default_config not in unique_configs:
@@ -53,6 +54,7 @@ def generate_config_header(config_file, output_file):
         cfg = conf['config']
         config_tuple = (cfg['warps_m'], cfg['warps_n'],
                         cfg['warp_tile_m'], cfg['warp_tile_n'],
+                        cfg['swizzle'],
                         cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write'])
         config_idx = unique_configs.index(config_tuple)
 
@@ -103,6 +105,7 @@ struct gemm_params
     int warps_n;
     int warp_tile_m;
     int warp_tile_n;
+    int swizzle;
     int bits;
     bool buffer_first;
     bool use_async;
@@ -112,17 +115,17 @@ struct gemm_params
 namespace detail
 {{
     // Kernel configuration tuple
-    using kernel_config = std::tuple<int, int, int, int, int, bool, bool, bool>;
+    using kernel_config = std::tuple<int, int, int, int, int, int, bool, bool, bool>;
 
     // All unique kernel configurations
     static constexpr std::array<kernel_config, KERNEL_VARIANTS> kernel_configs = {{
 """
 
     # Generate config array
-    for i, (wm, wn, wtm, wtn, bits, buffer, ua, direct) in enumerate(unique_configs):
-        code += f"        std::tuple<int, int, int, int, int, bool, bool, bool>{{{wm}, {wn}, {wtm}, {wtn}, {bits}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}}}"
+    for i, (wm, wn, wtm, wtn, swizzle, bits, buffer, ua, direct) in enumerate(unique_configs):
+        code += f"        std::tuple<int, int, int, int, int, int, bool, bool, bool>{{{wm}, {wn}, {wtm}, {wtn}, {swizzle}, {bits}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}}}"
         code += "," if i < len(unique_configs) - 1 else ""
-        code += f" // Config {i}: warps({wm},{wn}) tiles({wtm},{wtn}) bits({bits}) buffer({buffer}) ua({ua}) direct({direct})\n"
+        code += f" // Config {i}: warps({wm},{wn}) tiles({wtm},{wtn}) swizzle({swizzle}) bits({bits}) buffer({buffer}) ua({ua}) direct({direct})\n"
 
     code += f"""    }};
 
@@ -227,7 +230,7 @@ namespace detail
                 const auto& key = entry.first;
 
                 // Only consider configs with matching layout and closest K
-                if(key.layout_a == layout_a && key.layout_b == layout_b && 
+                if(key.layout_a == layout_a && key.layout_b == layout_b &&
                    key.layout_c == layout_c && key.k == closest_k)
                 {
                     double dist = mn_distance(m, n, key.m, key.n);
@@ -337,10 +340,11 @@ constexpr gemm_params get_gemm_params(size_t m, size_t n, size_t k,
         std::get<1>(config),  // warps_n
         std::get<2>(config),  // warp_tile_m
         std::get<3>(config),  // warp_tile_n
-        std::get<4>(config),  // bits
-        std::get<5>(config),  // buffer_first
-        std::get<6>(config),  // use_async
-        std::get<7>(config)   // use_direct_write
+        std::get<4>(config),  // swizzle
+        std::get<5>(config),  // bits
+        std::get<6>(config),  // buffer_first
+        std::get<7>(config),  // use_async
+        std::get<8>(config)   // use_direct_write
     };
 }
 
@@ -383,6 +387,7 @@ def generate_kernel_sources(config_file, output_dir):
         config_key = (
             cfg['warps_m'], cfg['warps_n'],
             cfg['warp_tile_m'], cfg['warp_tile_n'],
+            cfg['swizzle'],
             cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write'],
             layout['A'], layout['B'], layout['C']
         )
@@ -392,23 +397,20 @@ def generate_kernel_sources(config_file, output_dir):
             continue
         seen_combinations.add(config_key)
 
-        wm, wn, wtm, wtn, bits, buffer, ua, direct = config_key[:8]
-        layout_a, layout_b, layout_c = config_key[8:]
+        wm, wn, wtm, wtn, swizzle_val, bits, buffer, ua, direct = config_key[:9]
+        layout_a, layout_b, layout_c = config_key[9:]
 
         filename = f"kernel_inst_{file_index}.cpp"
         filepath = output_path / filename
         file_list.append(filename)
 
-        # Generate the source file with unique kernel name
+        # Generate the source file
         code = f"""// Auto-generated kernel instantiation file - DO NOT EDIT
-// Config: warps({wm},{wn}) tiles({wtm},{wtn}) bits({bits}) buffer({buffer}) ua({ua}) direct({direct})
+// Config: warps({wm},{wn}) tiles({wtm},{wtn}) swizzle({swizzle_val}) bits({bits}) buffer({buffer}) ua({ua}) direct({direct})
 // Layout: A={layout_a}, B={layout_b}, C={layout_c}
 // Size hint: {range_info['M']}x{range_info['N']}x{range_info['K']}
 
-// Rename kernel to avoid ODR violations across compilation units
-#define kernel_gemm kernel_gemm_inst_{file_index}
 #include <rocm_wmma_gemm/kernel/kernel.hpp>
-#undef kernel_gemm
 
 namespace rocm_wmma_gemm
 {{
@@ -423,9 +425,9 @@ namespace rocm_wmma_gemm
             layout_str = f"{layout_a[0]}{layout_b[0]}{layout_c[0]}"  # e.g., "rrr" for A=row_major, B=row_major, C=row_major
 
             code += f"""extern "C" void* get_kernel_inst_{file_index}_{t_name}_{u_name}_{layout_str}() {{
-    return (void*)&kernel_gemm_inst_{file_index}<{t_type}, {u_type},
+    return (void*)&kernel_gemm_impl<{t_type}, {u_type},
         m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
-        {wm}, {wn}, {wtm}, {wtn}, {bits}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}>;
+        {wm}, {wn}, {wtm}, {wtn}, {swizzle_val}, {bits}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}>::run;
 }}
 
 """
@@ -474,12 +476,13 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
         cfg = conf['config']
         unique_configs.add((cfg['warps_m'], cfg['warps_n'],
                             cfg['warp_tile_m'], cfg['warp_tile_n'],
+                            cfg['swizzle'],
                             cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write']))
 
     # Add default configs
     default_configs = [
-        (4, 4, 4, 4, 256, True, True, False),
-        (4, 4, 4, 4, 256, True, True, True)
+        (4, 4, 4, 4, 8, 256, True, True, False),
+        (4, 4, 4, 4, 8, 256, True, True, True)
     ]
     for default_config in default_configs:
         if default_config not in unique_configs:
@@ -520,6 +523,7 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
         config_key = (
             cfg['warps_m'], cfg['warps_n'],
             cfg['warp_tile_m'], cfg['warp_tile_n'],
+            cfg['swizzle'],
             cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write'],
             layout['A'], layout['B'], layout['C']
         )
@@ -528,7 +532,7 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
             continue
         seen_combinations.add(config_key)
 
-        config_tuple = config_key[:8]
+        config_tuple = config_key[:9]
         layout_tuple = (layout['A'], layout['B'], layout['C'])
         config_layout_to_file[(config_tuple, layout_tuple)] = file_index
 
@@ -579,7 +583,7 @@ static void* kernel_table[{num_configs}][4][8] = {{
 
     # Generate the table initialization
     for config_idx, config_tuple in enumerate(unique_configs):
-        code += f"    // Config {config_idx}: warps({config_tuple[0]},{config_tuple[1]}) tiles({config_tuple[2]},{config_tuple[3]}) bits({config_tuple[4]}) buffer({config_tuple[5]}) ua({config_tuple[6]}) direct({config_tuple[7]})\n"
+        code += f"    // Config {config_idx}: warps({config_tuple[0]},{config_tuple[1]}) tiles({config_tuple[2]},{config_tuple[3]}) swizzle({config_tuple[4]}) bits({config_tuple[5]}) buffer({config_tuple[6]}) ua({config_tuple[7]}) direct({config_tuple[8]})\n"
         code += "    {\n"
 
         for type_idx, (_, _, t_name, u_name) in enumerate(type_pairs):
@@ -641,12 +645,13 @@ def generate_dispatch_table(config_file, kernel_dir, include_dir):
         cfg = conf['config']
         unique_configs.add((cfg['warps_m'], cfg['warps_n'],
                             cfg['warp_tile_m'], cfg['warp_tile_n'],
+                            cfg['swizzle'],
                             cfg['bits'], cfg['buffer_first'], cfg['use_async'], cfg['use_direct_write']))
 
     # Add default configs
     default_configs = [
-        (4, 4, 4, 4, 256, True, True, False),
-        (4, 4, 4, 4, 256, True, True, True)
+        (4, 4, 4, 4, 8, 256, True, True, False),
+        (4, 4, 4, 4, 8, 256, True, True, True)
     ]
     for default_config in default_configs:
         if default_config not in unique_configs:
@@ -695,18 +700,18 @@ namespace rocm_wmma_gemm
 template<>
 typename kernel_dispatch<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b}>::kernel_func_ptr
 kernel_dispatch<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b}>::dispatch_by_params(
-    int warps_m, int warps_n, int warp_tile_m, int warp_tile_n, int bits, bool buffer_first, bool use_async, bool use_direct_write)
+    int warps_m, int warps_n, int warp_tile_m, int warp_tile_n, int swizzle, int bits, bool buffer_first, bool use_async, bool use_direct_write)
 {{
 """
 
             # Generate if-else chain for each config
-            for i, (wm, wn, wtm, wtn, b, buffer, ua, direct) in enumerate(unique_configs):
+            for i, (wm, wn, wtm, wtn, sw, b, buffer, ua, direct) in enumerate(unique_configs):
                 if_keyword = "if" if i == 0 else "else if"
                 code += f"""    {if_keyword}(warps_m == {wm} && warps_n == {wn} && warp_tile_m == {wtm} &&
-       warp_tile_n == {wtn} && bits == {b} && buffer_first == {str(buffer).lower()} && use_async == {str(ua).lower()} && use_direct_write == {str(direct).lower()})
+       warp_tile_n == {wtn} && swizzle == {sw} && bits == {b} && buffer_first == {str(buffer).lower()} && use_async == {str(ua).lower()} && use_direct_write == {str(direct).lower()})
     {{
-        return &kernel_gemm<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
-                           {wm}, {wn}, {wtm}, {wtn}, {b}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}>;
+        return &kernel_gemm_impl<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
+                           {wm}, {wn}, {wtm}, {wtn}, {sw}, {b}, {str(buffer).lower()}, {str(ua).lower()}, {str(direct).lower()}>::run;
     }}
 """
 
@@ -745,4 +750,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    

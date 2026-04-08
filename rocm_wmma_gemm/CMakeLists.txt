@@ -96,3 +96,10 @@ configure_file(
     ${CMAKE_BINARY_DIR}/tune.py
     COPYONLY
 )
+
+# Copy race.py to build directory
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/race.py
+    ${CMAKE_BINARY_DIR}/race.py
+    COPYONLY
+)

@@ -180,11 +180,17 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
                             void>::type
 {
     const T* tmp = data;
-    for(auto it = frag.begin(); it != frag.end(); ++it)
+    auto     it  = frag.begin();
+
+    auto load_element = [&]<size_t i>()
     {
         *it = *tmp;
         tmp += M;
-    }
+        ++it;
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (load_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE>{});
 }
 
 template<m_input MATRIX, m_layout ACCESS, class T, int TILE>
@@ -193,11 +199,17 @@ __device__ __forceinline__ auto load_matrix(fragment<T, TILE>& frag, const T* da
                             void>::type
 {
     const T* tmp = data;
-    for(auto it = frag.begin(); it != frag.end(); ++it)
+    auto     it  = frag.begin();
+
+    auto load_element = [&]<size_t i>()
     {
         *it = *tmp;
         tmp += N;
-    }
+        ++it;
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (load_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE>{});
 }
 
 template<m_layout ACCESS, bool USE_SHARED, class T, int TILE>
@@ -205,15 +217,18 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::row_major && !USE_SHARED, void>::type
 {
-    for(int i = 0; i < TILE / 2; ++i)
+    auto store_element = [&]<size_t i>()
     {
-        const int r = i * 2;
-        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        constexpr int r = i * 2;
+        constexpr int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         if((row + r) < M && col < N)
         {
             data[(row + r) * N + col] = frag[s];
         }
-    }
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (store_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE / 2>{});
 }
 
 template<m_layout ACCESS, bool USE_SHARED, class T, int TILE>
@@ -221,12 +236,15 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::row_major && USE_SHARED, void>::type
 {
-    for(int i = 0; i < TILE / 2; ++i)
+    auto store_element = [&]<size_t i>()
     {
-        const int r = i * 2;
-        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        constexpr int r = i * 2;
+        constexpr int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         data[(row + r) * N + col] = frag[s];
-    }
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (store_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE / 2>{});
 }
 
 template<m_layout ACCESS, bool USE_SHARED, class T, int TILE>
@@ -234,15 +252,18 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::col_major && !USE_SHARED, void>::type
 {
-    for(int i = 0; i < TILE / 2; ++i)
+    auto store_element = [&]<size_t i>()
     {
-        const int r = i * 2;
-        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        constexpr int r = i * 2;
+        constexpr int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         if((row + r) < M && col < N)
         {
             data[col * M + (row + r)] = frag[s];
         }
-    }
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (store_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE / 2>{});
 }
 
 template<m_layout ACCESS, bool USE_SHARED, class T, int TILE>
@@ -250,12 +271,15 @@ __device__ __forceinline__ auto
     store_matrix(T* data, fragment<T, TILE>& frag, int row, int col, int M, int N) ->
     typename std::enable_if<ACCESS == m_layout::col_major && USE_SHARED, void>::type
 {
-    for(int i = 0; i < TILE / 2; ++i)
+    auto store_element = [&]<size_t i>()
     {
-        const int r = i * 2;
-        const int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
+        constexpr int r = i * 2;
+        constexpr int s = (std::is_same<T, float>::value || std::is_same<T, int>::value) ? i : r;
         data[col * M + (row + r)] = frag[s];
-    }
+    };
+
+    [&]<size_t... i>(std::index_sequence<i...>)
+    { (store_element.template operator()<i>(), ...); }(std::make_index_sequence<TILE / 2>{});
 }
 
 } // namespace rocm_wmma_gemm

@@ -241,34 +241,34 @@ __device__ __forceinline__ void gemm_impl(
 
         auto load_ab = [&]<size_t wt>()
         {
+            auto load_a = [&]()
+            {
+                if constexpr(wt < warp_tile_m)
+                {
+                    load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wt], curr_a, block_m, stride_a);
+                    curr_a += frag_offset_A;
+                }
+            };
+
+            auto load_b = [&]()
+            {
+                if constexpr(wt < warp_tile_n)
+                {
+                    load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wt], curr_b, stride_b, block_n);
+                    curr_b += frag_offset_B;
+                }
+            };
+
             // LDS fragment loads for current tile
             if constexpr(warp_tile_m >= warp_tile_n)
             {
-                if constexpr(wt < warp_tile_m)
-                {
-                    load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wt], curr_a, block_m, stride_a);
-                    curr_a += frag_offset_A;
-                }
-
-                if constexpr(wt < warp_tile_n)
-                {
-                    load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wt], curr_b, stride_b, block_n);
-                    curr_b += frag_offset_B;
-                }
+                load_a();
+                load_b();
             }
             else
             {
-                if constexpr(wt < warp_tile_n)
-                {
-                    load_matrix<m_input::matrix_b, LAYOUT_B>(b_frag[wt], curr_b, stride_b, block_n);
-                    curr_b += frag_offset_B;
-                }
-
-                if constexpr(wt < warp_tile_m)
-                {
-                    load_matrix<m_input::matrix_a, LAYOUT_A>(a_frag[wt], curr_a, block_m, stride_a);
-                    curr_a += frag_offset_A;
-                }
+                load_b();
+                load_a();
             }
         };
 
@@ -276,44 +276,29 @@ __device__ __forceinline__ void gemm_impl(
         { (load_ab.template operator()<wt>(), ...); }(std::make_index_sequence<wt_max>{});
 
         // Compute
-        if constexpr(warp_tile_m >= warp_tile_n)
-        {
-            auto compute_wm = [&]<size_t wm>()
-            {
-                auto compute_wn = [&]<size_t wn>()
-                {
-                    size_t wn_s = (wm & 1) ? (warp_tile_n - wn - 1) : wn;
-                    wmma(a_frag[wm], b_frag[wn_s], c_frags[wm][wn_s]);
-                };
+        constexpr bool   m_is_major = warp_tile_m >= warp_tile_n;
+        constexpr size_t outer_max  = m_is_major ? warp_tile_m : warp_tile_n;
+        constexpr size_t inner_max  = m_is_major ? warp_tile_n : warp_tile_m;
 
-                [&]<size_t... wn>(std::index_sequence<wn...>) {
-                    (compute_wn.template operator()<wn>(), ...);
-                }(std::make_index_sequence<warp_tile_n>{});
+        auto compute_outer = [&]<size_t outer>()
+        {
+            auto compute_inner = [&]<size_t inner>()
+            {
+                size_t inner_s = (outer & 1) ? (inner_max - inner - 1) : inner;
+                size_t wm_s    = m_is_major ? outer : inner_s;
+                size_t wn_s    = m_is_major ? inner_s : outer;
+
+                wmma(a_frag[wm_s], b_frag[wn_s], c_frags[wm_s][wn_s]);
             };
 
-            [&]<size_t... wm>(std::index_sequence<wm...>) {
-                (compute_wm.template operator()<wm>(), ...);
-            }(std::make_index_sequence<warp_tile_m>{});
-        }
-        else
-        {
-            auto compute_wn = [&]<size_t wn>()
-            {
-                auto compute_wm = [&]<size_t wm>()
-                {
-                    size_t wm_s = (wn & 1) ? (warp_tile_m - wm - 1) : wm;
-                    wmma(a_frag[wm_s], b_frag[wn], c_frags[wm_s][wn]);
-                };
+            [&]<size_t... inner>(std::index_sequence<inner...>) {
+                (compute_inner.template operator()<inner>(), ...);
+            }(std::make_index_sequence<inner_max>{});
+        };
 
-                [&]<size_t... wm>(std::index_sequence<wm...>) {
-                    (compute_wm.template operator()<wm>(), ...);
-                }(std::make_index_sequence<warp_tile_m>{});
-            };
-
-            [&]<size_t... wn>(std::index_sequence<wn...>) {
-                (compute_wn.template operator()<wn>(), ...);
-            }(std::make_index_sequence<warp_tile_n>{});
-        }
+        [&]<size_t... outer>(std::index_sequence<outer...>) {
+            (compute_outer.template operator()<outer>(), ...);
+        }(std::make_index_sequence<outer_max>{});
 
         if constexpr(buffer_first)
         {

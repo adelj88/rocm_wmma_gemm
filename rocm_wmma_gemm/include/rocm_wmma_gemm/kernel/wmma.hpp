@@ -28,6 +28,19 @@
 namespace rocm_wmma_gemm
 {
 
+/**
+ * @brief Issues a hardware WMMA (Wave Matrix Multiply-Accumulate) instruction.
+ *
+ * Computes: frag3 = frag1 * frag2 + frag3
+ *
+ * @tparam T1 Data type of the input matrices (A and B).
+ * @tparam T2 Data type of the accumulator matrix (C).
+ * @tparam TILE Dimension of the WMMA tile.
+ *
+ * @param frag1 The A matrix fragment.
+ * @param frag2 The B matrix fragment.
+ * @param frag3 The C matrix (accumulator) fragment, which is updated in place.
+ */
 template<class T1, class T2, int TILE>
 __device__ __forceinline__ auto
     wmma(fragment<T1, TILE>& frag1, fragment<T1, TILE>& frag2, fragment<T2, TILE>& frag3) ->

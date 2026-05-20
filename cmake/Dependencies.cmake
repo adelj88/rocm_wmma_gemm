@@ -17,7 +17,7 @@ if(NOT TARGET GTest::GTest AND NOT TARGET GTest::gtest)
         FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG        e2239ee6043f73722e7aa812a459f54a28552929 # release-1.11.0
+        GIT_TAG        v1.17.0
         )
     endif()
     FetchContent_MakeAvailable(googletest)
@@ -41,7 +41,7 @@ if(NOT TARGET benchmark::benchmark)
     FetchContent_Declare(
         googlebench
         GIT_REPOSITORY https://github.com/google/benchmark.git
-        GIT_TAG        v1.9.1
+        GIT_TAG        v1.9.5
     )
     set(HAVE_STD_REGEX ON)
     set(RUN_HAVE_STD_REGEX 1)

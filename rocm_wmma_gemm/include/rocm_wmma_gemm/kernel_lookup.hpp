@@ -30,11 +30,14 @@
 namespace rocm_wmma_gemm
 {
 
-// Simple lookup function: returns kernel function pointer from static table
-// Parameters:
-//   config_idx: Configuration index (from find_best_config)
-//   type_idx: Type pair index (0=half-half, 1=float-half, 2=bf16-bf16, 3=float-bf16)
-//   layout_idx: Layout combination index (0=rrr, 1=rrc, 2=rcr, 3=rcc, 4=crr, 5=crc, 6=ccr, 7=ccc)
+/**
+ * @brief Retrieves the kernel function pointer from the pre-compiled static table.
+ *
+ * @param config_idx Configuration index (obtained from `find_best_config`).
+ * @param type_idx Type pair index (0=half-half, 1=float-half, 2=bf16-bf16, 3=float-bf16).
+ * @param layout_idx Layout combination index (0=rrr, 1=rrc, 2=rcr, 3=rcc, 4=crr, 5=crc, 6=ccr, 7=ccc).
+ * @return void* Pointer to the matching kernel function, or nullptr if not available.
+ */
 void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx);
 
 } // namespace rocm_wmma_gemm

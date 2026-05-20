@@ -1,6 +1,10 @@
 # Define targets to build for
 set(GPU_TARGET "gfx1151" CACHE STRING "GPU targets to build for")
 
+# Clean up previous generated files to ensure they are overwritten
+file(REMOVE_RECURSE ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel)
+file(REMOVE_RECURSE ${CMAKE_CURRENT_BINARY_DIR}/src/kernel_inst)
+
 # Create the config directory in the binary dir if it doesn't exist
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/rocm_wmma_gemm/kernel)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/src/kernel_inst)

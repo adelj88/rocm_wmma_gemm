@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """WMMA kernel configuration tuner using Parameter-less GOMEA.
 
-This script optimizes GPU kernel configurations (block sizes, warps, booleans)
+This script optimizes GPU kernel configurations (block sizes, warps, etc.)
 using the Gene-pool Optimal Mixing Evolutionary Algorithm (GOMEA). GPU tuning
 has strong "epistasis" (parameters interact heavily, e.g., block size and bits).
 
@@ -9,9 +9,10 @@ Glossary of Advanced Mechanics Included:
 1. Niching (Hall of Fame): Instead of a single elitist, the algorithm maintains
    up to 4 diverse elites globally and locally. Stagnant individuals mix with
    their *closest* elite. This preserves diverse lineages and destroys gravity wells.
-2. Global Elite Linkage Learning (FOS): Calculates Mutual Information on the top
-   50% of ALL historical evaluations to mathematically prove which parameters must
-   move together. Includes Spurious Linkage Prevention to keep building blocks pure.
+2. Unsupervised Local Linkage Trees: Uses Leader Clustering to divide the top 50%
+   of history into natural niches. Calculates a separate Mutual Information (MI)
+   matrix and Linkage Tree (FOS) for each cluster to perfectly capture conditional
+   dependencies without hardcoded assumptions.
 3. Multi-Niche Seeding (Knowledge Transfer): Injects the entire Global Hall of Fame
    into newly spawned larger populations to give them a massive, diverse head start.
 4. Interleaved Multi-Start (IMS): Parameter-less population sizing. Spawns
@@ -59,9 +60,6 @@ class WMMATuner:
             'warp_tile_n':      [1, 2, 4, 8],
             'swizzle':          [4, 8, 16],
             'bits':             [128, 256],
-            'buffer_first':     [False, True],
-            'use_async':        [False, True],
-            'use_direct_write': [False, True],
         }
 
         self.param_names = list(self.param_space.keys())
@@ -100,6 +98,9 @@ class WMMATuner:
         if layout_a == 0 and layout_b == 0:
             if swizzle != 8:
                 return False
+
+        if wtm == 1 and wtn == 1:
+            return False
 
         wmma_tile = 16
         block_m = wm * wtm * wmma_tile
@@ -150,9 +151,6 @@ class WMMATuner:
                 str(d['warp_tile_m']), str(d['warp_tile_n']),
                 str(d['swizzle']),
                 str(d['bits']),
-                str(1 if d['buffer_first'] else 0),
-                str(1 if d['use_async'] else 0),
-                str(1 if d['use_direct_write'] else 0),
                 str(la), str(lb), str(lc), self.gpu_arch
             ], capture_output=True, text=True, timeout=60, check=False)
             if result.returncode != 0:
@@ -168,80 +166,104 @@ class WMMATuner:
 
     def _learn_linkage_tree(self, population_configs):
         """
-        Builds the Family of Subsets (FOS) dynamically.
-        Calculates Mutual Information (MI) between all parameters to see which ones
-        are correlated (e.g., specific booleans that only work well together).
-        Uses UPGMA hierarchical clustering to group them into a linkage tree.
+        Builds the Family of Subsets (FOS) dynamically using Unsupervised Local Linkage.
+        Clusters the configs using Leader Clustering, then calculates Mutual Information
+        and UPGMA hierarchical clustering independently for each cluster.
+        Returns a list of tuples: [(cluster_leader_cfg, fos_list), ...]
         """
         n_params = self.n_params
         pop_size = len(population_configs)
 
-        # Level 0: Univariate (each parameter alone)
-        fos_list = [(i,) for i in range(n_params)]
-
+        univariate_fos = [(i,) for i in range(n_params)]
         if pop_size < 2:
-            return fos_list
+            if pop_size == 1:
+                return [(population_configs[0], univariate_fos)]
+            return [((0,) * n_params, univariate_fos)]
 
-        # 1. Compute Pairwise Mutual Information (MI)
-        MI = [[0.0] * n_params for _ in range(n_params)]
-        for i in range(n_params):
-            for j in range(i + 1, n_params):
-                counts_i = defaultdict(int)
-                counts_j = defaultdict(int)
-                counts_ij = defaultdict(int)
-                for cfg in population_configs:
-                    counts_i[cfg[i]] += 1
-                    counts_j[cfg[j]] += 1
-                    counts_ij[(cfg[i], cfg[j])] += 1
+        # --- Leader Clustering ---
+        # Group configs into clusters based on Hamming distance.
+        clusters = {}
+        for cfg in population_configs:
+            assigned = False
+            for leader in clusters.keys():
+                dist = sum(1 for a, b in zip(cfg, leader) if a != b)
+                if dist <= 2:
+                    clusters[leader].append(cfg)
+                    assigned = True
+                    break
+            if not assigned:
+                clusters[cfg] = [cfg]
 
-                mi = 0.0
-                for (val_i, val_j), c_ij in counts_ij.items():
-                    p_ij = c_ij / pop_size
-                    p_i = counts_i[val_i] / pop_size
-                    p_j = counts_j[val_j] / pop_size
-                    mi += p_ij * math.log(p_ij / (p_i * p_j))
+        local_fos_models = []
 
-                MI[i][j] = mi
-                MI[j][i] = mi
+        for leader, cluster_configs in clusters.items():
+            c_size = len(cluster_configs)
+            if c_size < 2:
+                local_fos_models.append((leader, univariate_fos))
+                continue
 
-        # 2. UPGMA Hierarchical Clustering
-        active_clusters = {i: [i] for i in range(n_params)}
-        next_id = n_params
+            # 1. Compute Pairwise Mutual Information (MI) for this cluster
+            MI = [[0.0] * n_params for _ in range(n_params)]
+            for i in range(n_params):
+                for j in range(i + 1, n_params):
+                    counts_i = defaultdict(int)
+                    counts_j = defaultdict(int)
+                    counts_ij = defaultdict(int)
+                    for cfg in cluster_configs:
+                        counts_i[cfg[i]] += 1
+                        counts_j[cfg[j]] += 1
+                        counts_ij[(cfg[i], cfg[j])] += 1
 
-        while len(active_clusters) > 1:
-            best_pair = None
-            max_mi = -float('inf')
-            c_ids = list(active_clusters.keys())
+                    mi = 0.0
+                    for (val_i, val_j), c_ij in counts_ij.items():
+                        p_ij = c_ij / c_size
+                        p_i = counts_i[val_i] / c_size
+                        p_j = counts_j[val_j] / c_size
+                        mi += p_ij * math.log(p_ij / (p_i * p_j))
 
-            for idx1 in range(len(c_ids)):
-                for idx2 in range(idx1 + 1, len(c_ids)):
-                    id1, id2 = c_ids[idx1], c_ids[idx2]
-                    c1, c2 = active_clusters[id1], active_clusters[id2]
-                    sum_mi = sum(MI[p1][p2] for p1 in c1 for p2 in c2)
-                    avg_mi = sum_mi / (len(c1) * len(c2))
+                    MI[i][j] = mi
+                    MI[j][i] = mi
 
-                    if avg_mi > max_mi:
-                        max_mi = avg_mi
-                        best_pair = (id1, id2)
+            # 2. UPGMA Hierarchical Clustering
+            active_clusters = {i: [i] for i in range(n_params)}
+            next_id = n_params
 
-            # --- Spurious Linkage Prevention (FOS Purity) ---
-            # If the best remaining parameters have zero correlation, stop merging!
-            # Forcing independent parameters into a group reduces mixing efficiency.
-            if max_mi <= 1e-6:
-                break
-            # ------------------------------------------------
+            fos_list = [(i,) for i in range(n_params)]
 
-            id1, id2 = best_pair
-            merged = active_clusters[id1] + active_clusters[id2]
-            del active_clusters[id1]
-            del active_clusters[id2]
-            active_clusters[next_id] = merged
-            next_id += 1
+            while len(active_clusters) > 1:
+                best_pair = None
+                max_mi = -float('inf')
+                c_ids = list(active_clusters.keys())
 
-            if len(merged) < n_params:
-                fos_list.append(tuple(merged))
+                for idx1 in range(len(c_ids)):
+                    for idx2 in range(idx1 + 1, len(c_ids)):
+                        id1, id2 = c_ids[idx1], c_ids[idx2]
+                        c1, c2 = active_clusters[id1], active_clusters[id2]
+                        sum_mi = sum(MI[p1][p2] for p1 in c1 for p2 in c2)
+                        avg_mi = sum_mi / (len(c1) * len(c2))
 
-        return fos_list
+                        if avg_mi > max_mi:
+                            max_mi = avg_mi
+                            best_pair = (id1, id2)
+
+                # --- Spurious Linkage Prevention (FOS Purity) ---
+                if max_mi <= 1e-6:
+                    break
+                # ------------------------------------------------
+
+                id1, id2 = best_pair
+                merged = active_clusters[id1] + active_clusters[id2]
+                del active_clusters[id1]
+                del active_clusters[id2]
+                active_clusters[next_id] = merged
+                next_id += 1
+
+                if len(merged) < n_params:
+                    fos_list.append(tuple(merged))
+
+            local_fos_models.append((leader, fos_list))
+
+        return local_fos_models
 
     # ------------------------------------------------------------------
     # GOMEA Optimal Mixing Operators
@@ -468,8 +490,8 @@ class WMMATuner:
 
             # --- Global Elite Archive Linkage Learning ---
             # Calculates Mutual Information using the top 50% of ALL valid configurations
-            # found so far. Mathematically proves which parameters (like booleans or
-            # block factorizations) must move together to achieve high performance.
+            # found so far. Mathematically proves which parameters (like block
+            # factorizations) must move together to achieve high performance.
             valid_history =[cfg for cfg, t in seen.items() if t != float('inf')]
             if len(valid_history) >= 8:
                 valid_history.sort(key=lambda cfg: seen[cfg])
@@ -478,7 +500,7 @@ class WMMATuner:
             else:
                 learning_configs =[cfg for _, cfg in pop]
 
-            dynamic_fos = self._learn_linkage_tree(learning_configs)
+            dynamic_local_fos = self._learn_linkage_tree(learning_configs)
             # ---------------------------------------------
 
             # --- Niching: Build the Hall of Fame ---
@@ -524,10 +546,16 @@ class WMMATuner:
 
                 ind_time, ind_cfg = pop[i]
 
+                # Assign to closest local FOS cluster
+                closest_leader, ind_fos = min(
+                    dynamic_local_fos,
+                    key=lambda x: sum(1 for a, b in zip(ind_cfg, x[0]) if a != b)
+                )
+
                 # 1. Gene-pool mixing
                 new_cfg, new_time, improved = self._optimal_mix(
                     ind_cfg, ind_time, pop, i, evaluate,
-                    layout_a, layout_b, rng, dynamic_fos)
+                    layout_a, layout_b, rng, ind_fos)
 
                 # 2. Strict Forced Improvement (FI) via Closest Elite
                 # Find the elite in the Hall of Fame that is most similar to this individual.
@@ -539,7 +567,7 @@ class WMMATuner:
                 if not improved and new_time > elite_time:
                     new_cfg, new_time, improved = self._optimal_mix_donor(
                         new_cfg, new_time, elite_cfg, evaluate,
-                        layout_a, layout_b, rng, dynamic_fos)
+                        layout_a, layout_b, rng, ind_fos)
 
                     # 3. Randomization if STILL no improvement
                     if not improved:
@@ -691,7 +719,7 @@ def load_existing_json(path):
             out.setdefault(sk, {})[lk] = tuple(
                 c[p] for p in[
                     'warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
-                    'swizzle', 'bits', 'buffer_first', 'use_async', 'use_direct_write'])
+                    'swizzle', 'bits'])
         print(f"Loaded {len(data.get('configurations',[]))} configs from '{path}'")
         return out
     except Exception as e:
@@ -709,17 +737,14 @@ def merge_results(existing, new):
             M, N, K = map(int, sk.split('x'))
             la, lb, lc = map(int, lk.split('_'))
             pnames =['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
-                       'swizzle', 'bits', 'buffer_first', 'use_async', 'use_direct_write']
+                       'swizzle', 'bits']
             merged[sk][lk] = {
                 "M": M, "N": N, "K": K,
                 "layout": {
                     "A": "row_major" if la == 0 else "col_major",
                     "B": "row_major" if lb == 0 else "col_major",
                     "C": "row_major" if lc == 0 else "col_major"},
-                "config": {p: (int(bl[i]) if isinstance(bl[i], (int, float))
-                               and not isinstance(bl[i], bool)
-                               else bool(bl[i]) if isinstance(bl[i], bool)
-                               else bl[i])
+                "config": {p: int(bl[i]) if isinstance(bl[i], (int, float)) else bl[i]
                            for i, p in enumerate(pnames)},
                 "avg_time_ms": None, "evaluations": 0,
                 "memory_used_bytes": None, "space_coverage_percent": 0}
@@ -819,8 +844,7 @@ Examples:
             c = r['config']
             print(f"  {lk}: {c['warps_m']},{c['warps_n']},"
                   f"{c['warp_tile_m']},{c['warp_tile_n']},"
-                  f"{c['swizzle']},{c['bits']},{int(c['buffer_first'])},"
-                  f"{int(c['use_async'])},{int(c['use_direct_write'])}"
+                  f"{c['swizzle']},{c['bits']}"
                   f" -> {r['avg_time_ms']:.3f}ms "
                   f"({r['evaluations']} evals)")
             total_evals += r['evaluations']

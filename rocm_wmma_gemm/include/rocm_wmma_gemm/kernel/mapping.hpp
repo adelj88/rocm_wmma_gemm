@@ -286,6 +286,19 @@ struct select_tile_mapping_impl<m_layout::col_major, m_layout::col_major, SWIZZL
     using type = xor_snake_col_swizzle_mapping<BLOCK_M, BLOCK_N, SWIZZLE>;
 };
 
+/**
+ * @brief Dispatcher for mapping a 1D tile ID to 2D block coordinates.
+ *
+ * Selects the optimal mapping strategy (e.g., snake traversal, swizzling)
+ * based on the memory layouts of the input matrices to maximize L2 cache
+ * reuse and avoid partition camping.
+ *
+ * @tparam BLOCK_M Block dimension M.
+ * @tparam BLOCK_N Block dimension N.
+ * @tparam LAYOUT_A Memory layout of Matrix A.
+ * @tparam LAYOUT_B Memory layout of Matrix B.
+ * @tparam SWIZZLE The swizzle size.
+ */
 template<int BLOCK_M, int BLOCK_N, m_layout LAYOUT_A, m_layout LAYOUT_B, int SWIZZLE>
 class tile_mapper
 {
@@ -294,6 +307,15 @@ class tile_mapper
                                                                                       BLOCK_N>;
 
 public:
+    /**
+     * @brief Maps a 1D block index to 2D block coordinates.
+     *
+     * @param tile_id The 1D block index (e.g., from `blockIdx.x`).
+     * @param grid_m The grid dimension in M.
+     * @param grid_n The grid dimension in N.
+     * @param block_row Output parameter for the mapped row.
+     * @param block_col Output parameter for the mapped column.
+     */
     __device__ __forceinline__ void
         map_tile(int tile_id, int grid_m, int grid_n, int* block_row, int* block_col) const
     {

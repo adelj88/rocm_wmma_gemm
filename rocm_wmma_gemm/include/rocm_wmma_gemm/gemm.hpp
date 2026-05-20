@@ -30,10 +30,44 @@
 namespace rocm_wmma_gemm
 {
 
-// Main GEMM function - types at the end for inference
+/**
+ * @brief Executes a General Matrix Multiplication (GEMM) operation: C = A * B.
+ *
+ * @tparam layout_C The memory layout of the output matrix C (row_major or col_major).
+ * @tparam layout_A The memory layout of the input matrix A (row_major or col_major).
+ * @tparam layout_B The memory layout of the input matrix B (row_major or col_major).
+ * @tparam T The data type of the output matrix C.
+ * @tparam U The data type of the input matrices A and B.
+ *
+ * @param C Pointer to the output matrix C in device memory.
+ * @param A Pointer to the input matrix A in device memory.
+ * @param B Pointer to the input matrix B in device memory.
+ * @param M Number of rows of matrices C and A.
+ * @param N Number of columns of matrices C and B.
+ * @param K Number of columns of matrix A and rows of matrix B.
+ * @param stream The HIP stream to execute the kernel on.
+ */
 template<m_layout layout_C, m_layout layout_A, m_layout layout_B, class T, class U>
 __host__ void gemm(T* C, U* A, U* B, size_t M, size_t N, size_t K, hipStream_t& stream);
 
+/**
+ * @brief Executes a batched General Matrix Multiplication (GEMM) operation.
+ *
+ * @tparam layout_C The memory layout of the output matrix C (row_major or col_major).
+ * @tparam layout_A The memory layout of the input matrix A (row_major or col_major).
+ * @tparam layout_B The memory layout of the input matrix B (row_major or col_major).
+ * @tparam T The data type of the output matrix C.
+ * @tparam U The data type of the input matrices A and B.
+ *
+ * @param C Pointer to the output matrix C in device memory.
+ * @param A Pointer to the input matrix A in device memory.
+ * @param B Pointer to the input matrix B in device memory.
+ * @param M Number of rows of matrices C and A.
+ * @param N Number of columns of matrices C and B.
+ * @param K Number of columns of matrix A and rows of matrix B.
+ * @param batch_count Number of GEMM operations to execute in the batch.
+ * @param stream The HIP stream to execute the kernel on.
+ */
 template<m_layout layout_C, m_layout layout_A, m_layout layout_B, class T, class U>
 __host__ void
     gemm(T* C, U* A, U* B, size_t M, size_t N, size_t K, size_t batch_count, hipStream_t& stream);

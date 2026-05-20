@@ -28,7 +28,39 @@
 namespace rocm_wmma_gemm
 {
 
-// Col-major load with optional padding
+template<typename V, typename T>
+static __forceinline__ __device__ const V& fast_vector_load(const T* buffer, int idx)
+{
+    return *reinterpret_cast<const V*>(reinterpret_cast<const char*>(buffer)
+                                       + static_cast<unsigned int>(idx)
+                                             * static_cast<unsigned int>(sizeof(T)));
+}
+
+template<typename V, typename T>
+static __forceinline__ __device__ void fast_vector_store(T* buffer, int idx, const V& value)
+{
+    *reinterpret_cast<V*>(reinterpret_cast<char*>(buffer)
+                          + static_cast<unsigned int>(idx) * static_cast<unsigned int>(sizeof(T)))
+        = value;
+}
+
+/**
+ * @brief Loads a block of data from global memory to shared memory (LDS) for column-major layout.
+ *
+ * @tparam ACCESS The layout of the matrix being accessed.
+ * @tparam MAX_BITS Maximum bits for vectorized load operations.
+ * @tparam BLOCK_SIZE Number of threads in the block.
+ * @tparam BLOCK_M Number of rows in the block.
+ * @tparam BLOCK_N Number of columns in the block.
+ * @tparam PADDING Padding to add to the leading dimension to avoid bank conflicts.
+ * @tparam T The data type of the matrix elements.
+ *
+ * @param output Pointer to the shared memory destination.
+ * @param input Pointer to the global memory source.
+ * @param M Number of rows in the global matrix.
+ * @param N Number of columns in the global matrix.
+ * @param tid Thread ID within the block.
+ */
 template<m_layout ACCESS,
          int      MAX_BITS,
          int      BLOCK_SIZE,
@@ -83,7 +115,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     auto load_vector_unchecked = [&]<size_t i>()
     {
         *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            = fast_vector_load<vector_type>(input, curr_gload);
         curr_gload += gload_stride;
         curr_sstore += sstore_stride;
     };
@@ -99,7 +131,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
         if(curr_col < BLOCK_N)
         {
             *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                = fast_vector_load<vector_type>(input, curr_gload);
         }
         curr_col += col_stride;
         curr_gload += gload_stride;
@@ -123,7 +155,23 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
-// Row-major load with optional padding
+/**
+ * @brief Loads a block of data from global memory to shared memory (LDS) for row-major layout.
+ *
+ * @tparam ACCESS The layout of the matrix being accessed.
+ * @tparam MAX_BITS Maximum bits for vectorized load operations.
+ * @tparam BLOCK_SIZE Number of threads in the block.
+ * @tparam BLOCK_M Number of rows in the block.
+ * @tparam BLOCK_N Number of columns in the block.
+ * @tparam PADDING Padding to add to the leading dimension to avoid bank conflicts.
+ * @tparam T The data type of the matrix elements.
+ *
+ * @param output Pointer to the shared memory destination.
+ * @param input Pointer to the global memory source.
+ * @param M Number of rows in the global matrix.
+ * @param N Number of columns in the global matrix.
+ * @param tid Thread ID within the block.
+ */
 template<m_layout ACCESS,
          int      MAX_BITS,
          int      BLOCK_SIZE,
@@ -174,7 +222,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     auto load_vector_unchecked = [&]<size_t i>()
     {
         *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            = fast_vector_load<vector_type>(input, curr_gload);
         curr_gload += gload_stride;
         curr_sstore += sstore_stride;
     };
@@ -189,7 +237,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
         if(curr_row < BLOCK_M)
         {
             *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                = fast_vector_load<vector_type>(input, curr_gload);
         }
         curr_row += row_stride;
         curr_gload += gload_stride;
@@ -213,6 +261,24 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     }
 }
 
+/**
+ * @brief Stores a block of data from shared memory (LDS) to global memory for column-major layout.
+ *
+ * @tparam ACCESS The layout of the matrix being accessed.
+ * @tparam MAX_BITS Maximum bits for vectorized store operations.
+ * @tparam BLOCK_SIZE Number of threads in the block.
+ * @tparam BLOCK_M Number of rows in the block.
+ * @tparam BLOCK_N Number of columns in the block.
+ * @tparam T The data type of the matrix elements.
+ *
+ * @param output Pointer to the global memory destination.
+ * @param input Pointer to the shared memory source.
+ * @param row The starting row in the global matrix.
+ * @param col The starting column in the global matrix.
+ * @param M Number of rows in the global matrix.
+ * @param N Number of columns in the global matrix.
+ * @param tid Thread ID within the block.
+ */
 template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
@@ -256,8 +322,10 @@ __device__ __forceinline__ auto
     {
         if(curr_gcol < N && (base_grow + vector_width - 1) < M)
         {
-            *reinterpret_cast<vector_type*>(output + curr_gstore)
-                = *reinterpret_cast<const vector_type*>(input + curr_sload);
+            fast_vector_store<vector_type>(
+                output,
+                curr_gstore,
+                *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
         else if(curr_gcol < N)
         {
@@ -265,7 +333,7 @@ __device__ __forceinline__ auto
             {
                 if((base_grow + v) < M)
                 {
-                    output[curr_gstore + v] = input[curr_sload + v];
+                    fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                 }
             }
         }
@@ -281,8 +349,10 @@ __device__ __forceinline__ auto
         {
             if(curr_gcol < N && (base_grow + vector_width - 1) < M)
             {
-                *reinterpret_cast<vector_type*>(output + curr_gstore)
-                    = *reinterpret_cast<const vector_type*>(input + curr_sload);
+                fast_vector_store<vector_type>(
+                    output,
+                    curr_gstore,
+                    *reinterpret_cast<const vector_type*>(input + curr_sload));
             }
             else if(curr_gcol < N)
             {
@@ -290,7 +360,7 @@ __device__ __forceinline__ auto
                 {
                     if((base_grow + v) < M)
                     {
-                        output[curr_gstore + v] = input[curr_sload + v];
+                        fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                     }
                 }
             }
@@ -317,6 +387,24 @@ __device__ __forceinline__ auto
     }
 }
 
+/**
+ * @brief Stores a block of data from shared memory (LDS) to global memory for row-major layout.
+ *
+ * @tparam ACCESS The layout of the matrix being accessed.
+ * @tparam MAX_BITS Maximum bits for vectorized store operations.
+ * @tparam BLOCK_SIZE Number of threads in the block.
+ * @tparam BLOCK_M Number of rows in the block.
+ * @tparam BLOCK_N Number of columns in the block.
+ * @tparam T The data type of the matrix elements.
+ *
+ * @param output Pointer to the global memory destination.
+ * @param input Pointer to the shared memory source.
+ * @param row The starting row in the global matrix.
+ * @param col The starting column in the global matrix.
+ * @param M Number of rows in the global matrix.
+ * @param N Number of columns in the global matrix.
+ * @param tid Thread ID within the block.
+ */
 template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
@@ -360,8 +448,10 @@ __device__ __forceinline__ auto
     {
         if(curr_grow < M && (base_gcol + vector_width - 1) < N)
         {
-            *reinterpret_cast<vector_type*>(output + curr_gstore)
-                = *reinterpret_cast<const vector_type*>(input + curr_sload);
+            fast_vector_store<vector_type>(
+                output,
+                curr_gstore,
+                *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
         else if(curr_grow < M)
         {
@@ -369,7 +459,7 @@ __device__ __forceinline__ auto
             {
                 if((base_gcol + v) < N)
                 {
-                    output[curr_gstore + v] = input[curr_sload + v];
+                    fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                 }
             }
         }
@@ -385,8 +475,10 @@ __device__ __forceinline__ auto
         {
             if(curr_grow < M && (base_gcol + vector_width - 1) < N)
             {
-                *reinterpret_cast<vector_type*>(output + curr_gstore)
-                    = *reinterpret_cast<const vector_type*>(input + curr_sload);
+                fast_vector_store<vector_type>(
+                    output,
+                    curr_gstore,
+                    *reinterpret_cast<const vector_type*>(input + curr_sload));
             }
             else if(curr_grow < M)
             {
@@ -394,7 +486,7 @@ __device__ __forceinline__ auto
                 {
                     if((base_gcol + v) < N)
                     {
-                        output[curr_gstore + v] = input[curr_sload + v];
+                        fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                     }
                 }
             }
@@ -421,6 +513,21 @@ __device__ __forceinline__ auto
     }
 }
 
+/**
+ * @brief Manages prefetching of a block of data from global memory into registers.
+ *
+ * This class abstracts the logic to stage loads from global memory into
+ * registers before committing them to shared memory (LDS), allowing for
+ * better latency hiding and instruction-level parallelism.
+ *
+ * @tparam ACCESS The memory layout of the block being prefetched.
+ * @tparam MAX_BITS Maximum bits for vectorized memory operations.
+ * @tparam BLOCK_SIZE Number of threads participating in the prefetch.
+ * @tparam BLOCK_M Number of rows in the block.
+ * @tparam BLOCK_N Number of columns in the block.
+ * @tparam PADDING Padding added to shared memory to avoid bank conflicts.
+ * @tparam T Data type of the elements.
+ */
 template<m_layout ACCESS,
          int      MAX_BITS,
          int      BLOCK_SIZE,
@@ -452,7 +559,15 @@ class prefetch_fragment
     vector_type regs[vectors_per_thread];
 
 public:
-    // col_major prefetch: global → registers
+    /**
+     * @brief Prefetches a full tile block from global memory into registers (col-major layout).
+     *
+     * @tparam A Must match the col_major layout.
+     * @param input Pointer to the start of the tile block in global memory.
+     * @param M The leading dimension of the global matrix.
+     * @param N Unused for stride, used for bounds check logic internally if needed.
+     * @param tid Thread ID in the block.
+     */
     template<m_layout A = ACCESS>
     __device__ __forceinline__ auto prefetch(const T* input, int M, int N, int tid) ->
         typename std::enable_if<A == m_layout::col_major, void>::type
@@ -468,7 +583,7 @@ public:
 
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[i] = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            regs[i] = fast_vector_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -480,8 +595,7 @@ public:
         {
             if(curr_col < BLOCK_N)
             {
-                regs[guaranteed_iters + i]
-                    = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                regs[guaranteed_iters + i] = fast_vector_load<vector_type>(input, curr_gload);
             }
             curr_col += col_stride;
             curr_gload += gload_stride;
@@ -502,7 +616,15 @@ public:
         }
     }
 
-    // row_major prefetch: global → registers
+    /**
+     * @brief Prefetches a full tile block from global memory into registers (row-major layout).
+     *
+     * @tparam A Must match the row_major layout.
+     * @param input Pointer to the start of the tile block in global memory.
+     * @param M Unused for stride, used for bounds check logic internally if needed.
+     * @param N The leading dimension of the global matrix.
+     * @param tid Thread ID in the block.
+     */
     template<m_layout A = ACCESS>
     __device__ __forceinline__ auto prefetch(const T* input, int M, int N, int tid) ->
         typename std::enable_if<A == m_layout::row_major, void>::type
@@ -518,7 +640,7 @@ public:
 
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[i] = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            regs[i] = fast_vector_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -530,8 +652,7 @@ public:
         {
             if(curr_row < BLOCK_M)
             {
-                regs[guaranteed_iters + i]
-                    = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                regs[guaranteed_iters + i] = fast_vector_load<vector_type>(input, curr_gload);
             }
             curr_row += row_stride;
             curr_gload += gload_stride;
@@ -552,7 +673,20 @@ public:
         }
     }
 
-    // col_major partial_prefetch: global → registers (slice STEP of TOTAL_STEPS)
+    /**
+     * @brief Partially prefetches data from global memory into registers (col-major layout).
+     *
+     * Divides the prefetching work into smaller steps to interleave memory instructions
+     * with compute instructions for better latency hiding.
+     *
+     * @tparam STEP The current step index (0 to TOTAL_STEPS - 1).
+     * @tparam TOTAL_STEPS Total number of steps the prefetch is divided into.
+     * @tparam A Must match the col_major layout.
+     * @param input Pointer to the start of the tile block in global memory.
+     * @param M The leading dimension of the global matrix.
+     * @param N Unused.
+     * @param tid Thread ID in the block.
+     */
     template<size_t STEP, size_t TOTAL_STEPS, m_layout A = ACCESS>
     __device__ __forceinline__ auto partial_prefetch(const T* input, int M, int N, int tid) ->
         typename std::enable_if<A == m_layout::col_major, void>::type
@@ -591,8 +725,7 @@ public:
         // Lambda for unchecked loads (guaranteed safe for all threads)
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[static_cast<size_t>(start) + i]
-                = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            regs[static_cast<size_t>(start) + i] = fast_vector_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -605,8 +738,7 @@ public:
         {
             if(curr_col < BLOCK_N)
             {
-                regs[remainder_start + i]
-                    = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                regs[remainder_start + i] = fast_vector_load<vector_type>(input, curr_gload);
             }
             curr_col += col_stride;
             curr_gload += gload_stride;
@@ -629,7 +761,20 @@ public:
         }
     }
 
-    // row_major partial_prefetch: global → registers (slice STEP of TOTAL_STEPS)
+    /**
+     * @brief Partially prefetches data from global memory into registers (row-major layout).
+     *
+     * Divides the prefetching work into smaller steps to interleave memory instructions
+     * with compute instructions for better latency hiding.
+     *
+     * @tparam STEP The current step index (0 to TOTAL_STEPS - 1).
+     * @tparam TOTAL_STEPS Total number of steps the prefetch is divided into.
+     * @tparam A Must match the row_major layout.
+     * @param input Pointer to the start of the tile block in global memory.
+     * @param M Unused.
+     * @param N The leading dimension of the global matrix.
+     * @param tid Thread ID in the block.
+     */
     template<size_t STEP, size_t TOTAL_STEPS, m_layout A = ACCESS>
     __device__ __forceinline__ auto partial_prefetch(const T* input, int M, int N, int tid) ->
         typename std::enable_if<A == m_layout::row_major, void>::type
@@ -668,8 +813,7 @@ public:
         // Lambda for unchecked loads (guaranteed safe for all threads)
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[static_cast<size_t>(start) + i]
-                = *reinterpret_cast<const vector_type*>(input + curr_gload);
+            regs[static_cast<size_t>(start) + i] = fast_vector_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -682,8 +826,7 @@ public:
         {
             if(curr_row < BLOCK_M)
             {
-                regs[remainder_start + i]
-                    = *reinterpret_cast<const vector_type*>(input + curr_gload);
+                regs[remainder_start + i] = fast_vector_load<vector_type>(input, curr_gload);
             }
             curr_row += row_stride;
             curr_gload += gload_stride;
@@ -706,7 +849,18 @@ public:
         }
     }
 
-    // col_major partial_commit: registers → LDS (slice STEP of TOTAL_STEPS)
+    /**
+     * @brief Partially commits prefetched data from registers to shared memory (col-major).
+     *
+     * Moves a portion of the previously prefetched data from the internal registers
+     * into the shared memory (LDS) buffer. Interleaved with computation.
+     *
+     * @tparam STEP The current step index (0 to TOTAL_STEPS - 1).
+     * @tparam TOTAL_STEPS Total number of steps the commit is divided into.
+     * @tparam A Must match the col_major layout.
+     * @param output Pointer to the destination in shared memory.
+     * @param tid Thread ID in the block.
+     */
     template<size_t STEP, size_t TOTAL_STEPS, m_layout A = ACCESS>
     __device__ __forceinline__ auto partial_commit(T* output, int tid) ->
         typename std::enable_if<A == m_layout::col_major, void>::type
@@ -784,7 +938,18 @@ public:
         }
     }
 
-    // row_major partial_commit: registers → LDS (slice STEP of TOTAL_STEPS)
+    /**
+     * @brief Partially commits prefetched data from registers to shared memory (row-major).
+     *
+     * Moves a portion of the previously prefetched data from the internal registers
+     * into the shared memory (LDS) buffer. Interleaved with computation.
+     *
+     * @tparam STEP The current step index (0 to TOTAL_STEPS - 1).
+     * @tparam TOTAL_STEPS Total number of steps the commit is divided into.
+     * @tparam A Must match the row_major layout.
+     * @param output Pointer to the destination in shared memory.
+     * @param tid Thread ID in the block.
+     */
     template<size_t STEP, size_t TOTAL_STEPS, m_layout A = ACCESS>
     __device__ __forceinline__ auto partial_commit(T* output, int tid) ->
         typename std::enable_if<A == m_layout::row_major, void>::type
@@ -862,7 +1027,17 @@ public:
         }
     }
 
-    // col_major commit: registers → LDS (caller must ensure vmcnt(0) before calling)
+    /**
+     * @brief Commits all prefetched data from registers to shared memory (col-major).
+     *
+     * Caller is responsible for ensuring that global memory loads have completed
+     * before calling this function. E.g., `s_waitcnt vmcnt(0)` is implicit via `__syncthreads()`
+     * or other barrier operations when properly staged.
+     *
+     * @tparam A Must match the col_major layout.
+     * @param output Pointer to the destination in shared memory.
+     * @param tid Thread ID in the block.
+     */
     template<m_layout A = ACCESS>
     __device__ __forceinline__ auto commit(T* output, int tid) ->
         typename std::enable_if<A == m_layout::col_major, void>::type
@@ -912,7 +1087,17 @@ public:
         }
     }
 
-    // row_major commit: registers → LDS (caller must ensure vmcnt(0) before calling)
+    /**
+     * @brief Commits all prefetched data from registers to shared memory (row-major).
+     *
+     * Caller is responsible for ensuring that global memory loads have completed
+     * before calling this function. E.g., `s_waitcnt vmcnt(0)` is implicit via `__syncthreads()`
+     * or other barrier operations when properly staged.
+     *
+     * @tparam A Must match the row_major layout.
+     * @param output Pointer to the destination in shared memory.
+     * @param tid Thread ID in the block.
+     */
     template<m_layout A = ACCESS>
     __device__ __forceinline__ auto commit(T* output, int tid) ->
         typename std::enable_if<A == m_layout::row_major, void>::type

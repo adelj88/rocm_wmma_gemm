@@ -33,7 +33,7 @@ namespace rocm_wmma_gemm
 {
 
 /**
- * @brief Enum class defining matrix layout options
+ * @brief Enum class defining matrix memory layout options.
  */
 enum class m_layout
 {
@@ -41,32 +41,48 @@ enum class m_layout
     col_major ///< Column-major layout (elements consecutive in memory by column)
 };
 
-// Enum to specify which matrix is being accessed (A or B)
+/**
+ * @brief Enum to specify which input matrix is being accessed.
+ */
 enum class m_input
 {
-    matrix_a,
-    matrix_b
+    matrix_a, ///< Refers to input matrix A
+    matrix_b ///< Refers to input matrix B
 };
 
+/**
+ * @brief Type selector struct for mapping high-level types to internal types.
+ *
+ * @tparam T The high-level data type (e.g., float, half, __hip_bfloat16).
+ */
 template<class T>
 struct type_selector
 {
-    using type = T;
+    using type = T; ///< The mapped internal type.
 };
 
+/**
+ * @brief Type selector specialization for half precision.
+ */
 template<>
 struct type_selector<half>
 {
-    using type = _Float16;
+    using type = _Float16; ///< Maps to _Float16 internally.
 };
 
+/**
+ * @brief Type selector specialization for bfloat16 precision.
+ */
 template<>
 struct type_selector<__hip_bfloat16>
 {
-    using type = short;
+    using type = short; ///< Maps to short internally.
 };
 
+/** @brief The base dimension size of a WMMA tile (16x16). */
 constexpr int wmma_tile = 16;
+
+/** @brief The number of threads in a warp for AMD GPUs (Wave32). */
 constexpr int warp_size = 32;
 
 } // namespace rocm_wmma_gemm

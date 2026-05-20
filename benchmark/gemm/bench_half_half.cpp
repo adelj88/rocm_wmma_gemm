@@ -234,7 +234,7 @@ int main(int argc, char* argv[])
     // Initialize Google Benchmark with filtered arguments
     benchmark::Initialize(&filtered_argc, filtered_argv);
 
-    std::vector<benchmark::internal::Benchmark*> benchmarks;
+    std::vector<benchmark::Benchmark*> benchmarks;
 
     // Register benchmarks for all layout combinations and shapes
     for(const auto& shape : shapes)

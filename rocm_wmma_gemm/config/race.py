@@ -36,7 +36,7 @@ def _parse_benchmark_output(output):
 def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch):
     """Compiles and runs the kernel configuration on the GPU ONE time, returning execution time."""
     pnames = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
-              'swizzle', 'bits', 'buffer_first', 'use_async', 'use_direct_write']
+              'swizzle', 'bits']
 
     # config could be a dict or a tuple. Handle both.
     if isinstance(config, dict):
@@ -52,9 +52,6 @@ def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch):
             str(d['warp_tile_m']), str(d['warp_tile_n']),
             str(d['swizzle']),
             str(d['bits']),
-            str(1 if d['buffer_first'] else 0),
-            str(1 if d['use_async'] else 0),
-            str(1 if d['use_direct_write'] else 0),
             str(la), str(lb), str(lc), gpu_arch
         ], capture_output=True, text=True, timeout=60, check=False)
         if result.returncode == 0:
@@ -119,12 +116,10 @@ def load_existing_json(path):
             c = e['config']
 
             pnames = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
-                      'swizzle', 'bits', 'buffer_first', 'use_async', 'use_direct_write']
+                      'swizzle', 'bits']
 
-            # Ensure booleans are true booleans internally
             tuple_cfg = tuple(
-                (int(c[p]) if isinstance(c[p], (int, float)) and not isinstance(c[p], bool)
-                 else bool(c[p]) if isinstance(c[p], bool) else c[p])
+                int(c[p]) if isinstance(c[p], (int, float)) else c[p]
                 for p in pnames
             )
             out.setdefault(sk, {})[lk] = tuple_cfg
@@ -135,7 +130,7 @@ def load_existing_json(path):
 
 def tuple_to_dict(config_tuple):
     pnames = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
-              'swizzle', 'bits', 'buffer_first', 'use_async', 'use_direct_write']
+              'swizzle', 'bits']
     return {name: config_tuple[i] for i, name in enumerate(pnames)}
 
 def save_json(merged_data, output_path):

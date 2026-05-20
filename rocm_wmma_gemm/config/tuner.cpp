@@ -166,9 +166,6 @@ struct config_params
     int         warp_tile_n;
     int         swizzle;
     int         bits;
-    bool        buffer_first;
-    bool        use_async;
-    bool        use_direct_write;
     int         layout_a; // 0=row_major, 1=col_major
     int         layout_b; // 0=row_major, 1=col_major
     int         layout_c; // 0=row_major, 1=col_major
@@ -180,6 +177,8 @@ std::unique_ptr<test_data> g_test_data;
 config_params              g_config;
 hipModule_t                g_module      = nullptr;
 hipFunction_t              g_kernel_func = nullptr;
+
+__global__ void warmup_kernel() {}
 
 // Generate kernel source code for specific configuration
 std::string generate_kernel_source(const config_params& config)
@@ -200,10 +199,7 @@ template struct kernel_gemm_impl<half, half, )"
                   << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
-                  << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits << ", "
-                  << (config.buffer_first ? "true" : "false") << ", "
-                  << (config.use_async ? "true" : "false") << ", "
-                  << (config.use_direct_write ? "true" : "false") << R"(>;
+                  << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits << R"(>;
 
 } // namespace rocm_wmma_gemm
 )";
@@ -303,9 +299,7 @@ bool compile_kernel(const config_params& config)
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
                    << ", " << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits
-                   << ", " << (config.buffer_first ? "true" : "false") << ", "
-                   << (config.use_async ? "true" : "false") << ", "
-                   << (config.use_direct_write ? "true" : "false") << ">::run";
+                   << ">::run";
 
     std::string kernel_name = kernel_name_ss.str();
     std::cout << "Adding name expression: " << kernel_name << std::endl;
@@ -440,16 +434,13 @@ void run_kernel_benchmark(benchmark::State& state)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 17)
+    if(argc != 14)
     {
         std::cerr << "Usage: " << argv[0]
                   << " M N K warps_m warps_n warp_tile_m warp_tile_n swizzle bits "
-                     "buffer_first "
-                     "use_async "
-                     "use_direct_write "
                      "layout_a layout_b layout_c gpu_arch"
                   << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 8 256 1 0 1 0 1 0 gfx1100"
+        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 8 256 0 1 0 gfx1100"
                   << std::endl;
         return 1;
     }
@@ -459,20 +450,17 @@ int main(int argc, char* argv[])
     size_t N = std::atol(argv[2]);
     size_t K = std::atol(argv[3]);
 
-    g_config.warps_m          = std::atoi(argv[4]);
-    g_config.warps_n          = std::atoi(argv[5]);
-    g_config.warp_tile_m      = std::atoi(argv[6]);
-    g_config.warp_tile_n      = std::atoi(argv[7]);
-    g_config.swizzle          = std::atoi(argv[8]);
-    g_config.bits             = std::atoi(argv[9]);
-    g_config.buffer_first     = (std::atoi(argv[10]) != 0);
-    g_config.use_async        = (std::atoi(argv[11]) != 0);
-    g_config.use_direct_write = (std::atoi(argv[12]) != 0);
-    g_config.layout_a         = std::atoi(argv[13]);
-    g_config.layout_b         = std::atoi(argv[14]);
-    g_config.layout_c         = std::atoi(argv[15]);
-    std::string tmp           = argv[16];
-    g_config.gpu_arch         = "--offload-arch=" + tmp;
+    g_config.warps_m     = std::atoi(argv[4]);
+    g_config.warps_n     = std::atoi(argv[5]);
+    g_config.warp_tile_m = std::atoi(argv[6]);
+    g_config.warp_tile_n = std::atoi(argv[7]);
+    g_config.swizzle     = std::atoi(argv[8]);
+    g_config.bits        = std::atoi(argv[9]);
+    g_config.layout_a    = std::atoi(argv[10]);
+    g_config.layout_b    = std::atoi(argv[11]);
+    g_config.layout_c    = std::atoi(argv[12]);
+    std::string tmp      = argv[13];
+    g_config.gpu_arch    = "--offload-arch=" + tmp;
 
     // Initialize test data
     g_test_data = std::make_unique<test_data>(M, N, K);
@@ -486,10 +474,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Successfully compiled kernel for config: " << g_config.warps_m << ","
               << g_config.warps_n << "," << g_config.warp_tile_m << "," << g_config.warp_tile_n
-              << "," << g_config.swizzle << "," << g_config.bits << "," << g_config.buffer_first
-              << "," << g_config.use_async << "," << g_config.use_direct_write << ","
-              << g_config.layout_a << "," << g_config.layout_b << "," << g_config.layout_c
-              << std::endl;
+              << "," << g_config.swizzle << "," << g_config.bits << "," << g_config.layout_a << ","
+              << g_config.layout_b << "," << g_config.layout_c << std::endl;
 
     // Initialize benchmark
     benchmark::Initialize(&argc, argv);

@@ -2,15 +2,14 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/adelj88/rocm_wmma_gemm)
 
-This repository provides a standalone, high-performance General Matrix Multiplication (GEMM) implementation optimized for AMD GPUs using ROCm's Wave Matrix Multiply-Accumulate (WMMA) intrinsics. It is derived from the fastest half-precision GEMM kernel developed in the `hgemm` sample within the [rocm_wmma_samples](https://github.com/adelj88/rocm_wmma_samples/tree/main/hgemm) project. This new repository refactors the kernel to facilitate exploration of different matrix data layouts and further optimizations.
+This repository provides a standalone, high-performance General Matrix Multiplication (GEMM) implementation optimized for AMD GPUs using ROCm's Wave Matrix Multiply-Accumulate (WMMA) intrinsics.
 
 Take note that the library isn't fully tuned, and has been only tuned for some sizes (if you pass inputs that are calculated as close to the tuned sizes, the right configuration will be selected). The current workflow of this library is to tune for the specific sizes of your use-case before building. This may be improved upon in the future if time permits.
 
 ## Purpose
 This repository aims to:
 - Provide a focused, high-performance GEMM kernel utilizing ROCm WMMA intrinsics.
-- Isolate and refine the fastest GEMM implementation derived from the `hgemm` sample in `rocm_wmma_samples`.
-- Explore and implement support for various matrix data layouts (e.g., row-major, column-major, potentially tiled formats) beyond the format used in the sample.
+- Explore and implement support for various matrix data layouts (e.g., row-major, column-major, potentially tiled formats).
 - Support `FP16`, `BF16` and `float` accumulators
 - Tune the GEMM kernel for different M, N, K sizes
 
@@ -93,12 +92,14 @@ The library includes a **Parameter-less GOMEA** (Gene-pool Optimal Mixing Evolut
 #### **Tuning Approach**
 The tuner leverages advanced mechanics to efficiently explore the discrete parameter space:
 
-- **Niching (Hall of Fame)**: Maintains diverse elites globally and locally to preserve diverse lineages and avoid falling into local optima.
-- **Global Elite Linkage Learning (FOS)**: Calculates Mutual Information to mathematically prove which parameters must move together (e.g., specific booleans that work well together).
-- **Interleaved Multi-Start (IMS)**: A parameter-less population sizing approach that spawns concurrent populations of increasing sizes.
+- **Niching (Hall of Fame)**: Instead of a single elitist, the algorithm maintains up to 4 diverse elites globally and locally. Stagnant individuals mix with their closest elite, preserving diverse lineages and destroying gravity wells.
+- **Unsupervised Local Linkage Trees**: Uses Leader Clustering to divide the top 50% of history into natural niches. Calculates a separate Mutual Information (MI) matrix and Linkage Tree (FOS) for each cluster to perfectly capture conditional dependencies without hardcoded assumptions.
+- **Multi-Niche Seeding (Knowledge Transfer)**: Injects the entire Global Hall of Fame into newly spawned larger populations to give them a massive, diverse head start.
+- **Interleaved Multi-Start (IMS)**: Parameter-less population sizing. Spawns concurrent populations of increasing sizes (4, 8, 16...) and interleaves them.
+- **Strict Forced Improvement (FI)**: If an individual stagnates, it is forced to mix with its closest elite. If it still fails, it is randomized.
 - **Descending Stratified Initialization**: Intelligently seeds new populations by testing the largest valid block sizes first, preventing wasted budget.
-- **Layout Sharing & Competitive Baselines**: Reuses row-major C configurations as baselines for column-major C runs, racing them against input files to potentially halve the evaluation budget.
-- **Multi-Niche Seeding**: Injects the entire Global Hall of Fame into newly spawned populations to give them a massive, diverse head start.
+- **Layout Sharing & Competitive Baselines**: Reuses row-major C configs as baselines for col-major C runs, racing them against input files to halve the budget.
+- **Stagnation Termination**: Terminates small populations that bounce between local optima, reallocating the evaluation budget to larger, exploratory populations.
 
 To run the tuner:
 ```bash

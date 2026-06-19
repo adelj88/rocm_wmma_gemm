@@ -93,7 +93,9 @@ The library includes a **Parameter-less GOMEA** (Gene-pool Optimal Mixing Evolut
 The tuner leverages advanced mechanics to efficiently explore the discrete parameter space:
 
 - **Niching (Hall of Fame)**: Instead of a single elitist, the algorithm maintains up to 4 diverse elites globally and locally. Stagnant individuals mix with their closest elite, preserving diverse lineages and destroying gravity wells.
-- **Unsupervised Local Linkage Trees**: Uses Leader Clustering to divide the top 50% of history into natural niches. Calculates a separate Mutual Information (MI) matrix and Linkage Tree (FOS) for each cluster to perfectly capture conditional dependencies without hardcoded assumptions.
+- **Linkage Learning (FOS construction)**: Uses canonical LT-GOMEA / niched-GOMEA with truncation selection (keeping the best `TRUNCATION_TAU` fraction of scored configs) so fitness directly guides linkage learning. If a block of parameters must move together to be fast, the survivors share it, keeping its Mutual Information high so UPGMA can group it.
+- **Balanced Leader Clustering**: Clusters the selected set by structural Hamming distance to maintain separate linkage models for structurally distinct basins, instead of averaging them into one dominant tree.
+- **Rank-based Mutual Information**: Calculates per-cluster, rank-based (ordinal) Mutual Information followed by UPGMA hierarchical clustering into Family-of-Subsets (FOS) with a spurious-linkage guard (`MI <= 1e-6`).
 - **Multi-Niche Seeding (Knowledge Transfer)**: Injects the entire Global Hall of Fame into newly spawned larger populations to give them a massive, diverse head start.
 - **Interleaved Multi-Start (IMS)**: Parameter-less population sizing. Spawns concurrent populations of increasing sizes (4, 8, 16...) and interleaves them.
 - **Strict Forced Improvement (FI)**: If an individual stagnates, it is forced to mix with its closest elite. If it still fails, it is randomized.

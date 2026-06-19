@@ -5,26 +5,39 @@ This script optimizes GPU kernel configurations (block sizes, warps, etc.)
 using the Gene-pool Optimal Mixing Evolutionary Algorithm (GOMEA). GPU tuning
 has strong "epistasis" (parameters interact heavily, e.g., block size and bits).
 
-Glossary of Advanced Mechanics Included:
-1. Niching (Hall of Fame): Instead of a single elitist, the algorithm maintains
-   up to 4 diverse elites globally and locally. Stagnant individuals mix with
-   their *closest* elite. This preserves diverse lineages and destroys gravity wells.
-2. Unsupervised Local Linkage Trees: Uses Leader Clustering to divide the top 50%
-   of history into natural niches. Calculates a separate Mutual Information (MI)
-   matrix and Linkage Tree (FOS) for each cluster to perfectly capture conditional
-   dependencies without hardcoded assumptions.
-3. Multi-Niche Seeding (Knowledge Transfer): Injects the entire Global Hall of Fame
-   into newly spawned larger populations to give them a massive, diverse head start.
-4. Interleaved Multi-Start (IMS): Parameter-less population sizing. Spawns
-   concurrent populations of increasing sizes (4, 8, 16...) and interleaves them.
-5. Strict Forced Improvement (FI): If an individual stagnates, it is forced to
-   mix with its closest elite. If it still fails, it is randomized.
-6. Descending Stratified Initialization: Intelligently seeds new populations by
-   testing the largest valid block sizes first, preventing wasted budget.
-7. Layout Sharing & Competitive Baselines: Reuses row-major C configs as baselines
-   for col-major C runs, racing them against input files to halve the budget.
-8. Stagnation Termination: Terminates small populations that bounce between local
-   optima, reallocating the evaluation budget to larger, exploratory populations.
+Linkage Learning (FOS construction) — canonical LT-GOMEA / niched-GOMEA
+(Thierens 2010; Maree et al.):
+  - Truncation selection: keep the best TRUNCATION_TAU fraction of all scored
+    configs. This is where fitness enters linkage learning — the linkage tree then
+    captures the dependency structure shared by good solutions. If a block of
+    parameters must move together to be fast, the survivors share it, so its MI is
+    high and UPGMA groups it.
+  - Balanced leader clustering of the selected set by structural Hamming distance
+    (threshold floor(n_params * 0.3)), so structurally distinct basins keep their
+    own linkage model instead of being averaged into one dominant tree. This is the
+    standard mechanism for multimodality / escaping local optima.
+  - Per cluster: rank-based (ordinal) Mutual Information, then UPGMA hierarchical
+    clustering into FOS subsets, with a spurious-linkage guard (MI <= 1e-6). Until
+    at least MIN_SAMPLE configs survive truncation, a univariate FOS is used.
+
+Optimization loop:
+  - Interleaved Multi-Start (IMS) spawns geometrically larger populations (4, 8, 16 ...)
+    following a binary-carry schedule, so smaller populations explore quickly while
+    larger ones refine promising regions.
+  - Each individual is assigned to its nearest cluster (by Hamming distance to the
+    cluster leader) and uses that cluster's FOS for gene-pool mixing.
+  - Strict Forced Improvement: a stagnant individual is forced to mix with its
+    closest elite; if it still fails to improve, it is randomized.
+  - Niching Hall of Fame: up to 4 diverse elites are kept (locally and globally);
+    the Global Hall of Fame seeds newly spawned populations to transfer knowledge
+    across restarts without collapsing into a single basin.
+  - Descending stratified initialisation ensures new populations sample across all
+    warps_m * warp_tile_m * warps_n * warp_tile_n tile areas rather than clustering
+    in one region.
+  - Stagnation termination retires small populations that bounce between local
+    optima, reallocating budget to larger, exploratory populations.
+  - Layout sharing & competitive baselines: row-major C configs seed col-major C
+    runs, raced against any input baseline to halve the budget when they win.
 """
 
 import subprocess
@@ -44,7 +57,12 @@ class WMMATuner:
 
     VALID_BLOCK_SIZES = [1, 2, 4, 8, 16, 32, 64]
 
-    def __init__(self, max_shared_memory=65336, gpu_arch="gfx1100",
+    # Linkage learning (canonical LT-GOMEA): fraction of scored configs kept by
+    # truncation selection before learning, and minimum survivors needed to learn.
+    TRUNCATION_TAU = 0.5
+    MIN_SAMPLE = 8
+
+    def __init__(self, max_shared_memory=65536, gpu_arch="gfx1100",
                  random_seed=42):
         self.max_shared_memory = max_shared_memory
         self.gpu_arch = gpu_arch
@@ -164,106 +182,165 @@ class WMMATuner:
     # Linkage Learning (Dynamic FOS via Mutual Information + UPGMA)
     # ------------------------------------------------------------------
 
-    def _learn_linkage_tree(self, population_configs):
+    def _rank_transform(self, configs, param_idx):
         """
-        Builds the Family of Subsets (FOS) dynamically using Unsupervised Local Linkage.
-        Clusters the configs using Leader Clustering, then calculates Mutual Information
-        and UPGMA hierarchical clustering independently for each cluster.
-        Returns a list of tuples: [(cluster_leader_cfg, fos_list), ...]
+        Converts raw parameter values for a single dimension into fractional ranks
+        (0.0 .. 1.0) across the config set. Ties receive the average of their ranks.
+        This makes MI sensitive to ordinal monotone relationships (e.g. larger warp_tile_m
+        co-occurring with larger warp_tile_n) rather than treating values as unordered labels.
+        """
+        values = [cfg[param_idx] for cfg in configs]
+        sorted_vals = sorted(set(values))
+        rank_map = {v: i / max(len(sorted_vals) - 1, 1) for i, v in enumerate(sorted_vals)}
+        return [rank_map[v] for v in values]
+
+    def _compute_mi_matrix(self, configs):
+        """
+        Computes a pairwise rank-based Mutual Information matrix over `configs`.
+
+        Values are first rank-transformed per parameter (ordinal-aware), then
+        discretised into 4 equal-width bins before computing MI. This captures
+        monotone co-dependencies that nominal MI would miss while remaining fast.
+        Returns an (n_params x n_params) symmetric matrix.
         """
         n_params = self.n_params
-        pop_size = len(population_configs)
+        n = len(configs)
+        MI = [[0.0] * n_params for _ in range(n_params)]
 
+        # Pre-compute binned ranks for every parameter dimension
+        n_bins = 4
+        binned = []
+        for k in range(n_params):
+            ranks = self._rank_transform(configs, k)
+            binned.append(tuple(min(int(r * n_bins), n_bins - 1) for r in ranks))
+
+        for i in range(n_params):
+            for j in range(i + 1, n_params):
+                counts_i = defaultdict(int)
+                counts_j = defaultdict(int)
+                counts_ij = defaultdict(int)
+                for row in range(n):
+                    vi, vj = binned[i][row], binned[j][row]
+                    counts_i[vi] += 1
+                    counts_j[vj] += 1
+                    counts_ij[(vi, vj)] += 1
+
+                mi = 0.0
+                for (vi, vj), c_ij in counts_ij.items():
+                    p_ij = c_ij / n
+                    p_i = counts_i[vi] / n
+                    p_j = counts_j[vj] / n
+                    if p_i > 0 and p_j > 0:
+                        mi += p_ij * math.log(p_ij / (p_i * p_j))
+
+                MI[i][j] = mi
+                MI[j][i] = mi
+
+        return MI
+
+    def _upgma_fos(self, MI):
+        """
+        Builds a FOS via UPGMA hierarchical clustering over a pairwise MI matrix.
+        Returns a list of tuples (parameter index groups) — univariate singletons
+        plus every intermediate merge group with more than one member.
+        Stops merging when the best remaining pair has MI <= 1e-6 (spurious linkage guard).
+        """
+        n_params = self.n_params
+        active_clusters = {i: [i] for i in range(n_params)}
+        next_id = n_params
+        fos_list = [(i,) for i in range(n_params)]
+
+        while len(active_clusters) > 1:
+            best_pair = None
+            max_mi = -float('inf')
+            c_ids = list(active_clusters.keys())
+
+            for idx1 in range(len(c_ids)):
+                for idx2 in range(idx1 + 1, len(c_ids)):
+                    id1, id2 = c_ids[idx1], c_ids[idx2]
+                    c1, c2 = active_clusters[id1], active_clusters[id2]
+                    sum_mi = sum(MI[p1][p2] for p1 in c1 for p2 in c2)
+                    avg_mi = sum_mi / (len(c1) * len(c2))
+
+                    if avg_mi > max_mi:
+                        max_mi = avg_mi
+                        best_pair = (id1, id2)
+
+            # Spurious Linkage Prevention: stop if no meaningful MI remains
+            if max_mi <= 1e-6:
+                break
+
+            id1, id2 = best_pair
+            merged = active_clusters[id1] + active_clusters[id2]
+            del active_clusters[id1]
+            del active_clusters[id2]
+            active_clusters[next_id] = merged
+            next_id += 1
+
+            if len(merged) < n_params:
+                fos_list.append(tuple(merged))
+
+        return fos_list
+
+    def _learn_linkage_tree(self, scored_history):
+        """
+        Builds per-cluster Family-of-Subsets (FOS) linkage trees, the canonical
+        LT-GOMEA / niched-GOMEA construction (Thierens 2010; Maree et al.).
+
+        Pipeline (textbook order):
+          1. Truncation selection: keep the best TRUNCATION_TAU fraction of all
+             scored configs. Selection is where fitness enters linkage learning —
+             the linkage tree then captures the dependency structure shared by good
+             solutions (if a block must move together to be fast, the survivors
+             share it, so its MI is high and UPGMA groups it).
+          2. Balanced leader clustering of the selected set by structural Hamming
+             distance, so structurally distinct basins keep their own linkage model
+             instead of being averaged into one dominant tree (multimodality).
+          3. Per cluster: rank-based MI (_compute_mi_matrix) -> UPGMA FOS.
+
+        Until at least MIN_SAMPLE configs survive truncation, a single univariate
+        model is returned (nothing to learn yet).
+
+        Args:
+            scored_history: list of (config, time) for all finite-time evaluations.
+
+        Returns a list of (cluster_leader_cfg, fos_list) models.
+        """
+        n_params = self.n_params
         univariate_fos = [(i,) for i in range(n_params)]
-        if pop_size < 2:
-            if pop_size == 1:
-                return [(population_configs[0], univariate_fos)]
+
+        # 1. Truncation selection (fitness enters here).
+        selected = [cfg for cfg, _ in sorted(scored_history, key=lambda x: x[1])]
+        keep = int(len(selected) * self.TRUNCATION_TAU)
+        selected = selected[:keep]
+
+        if len(selected) < self.MIN_SAMPLE:
             return [((0,) * n_params, univariate_fos)]
 
-        # --- Leader Clustering ---
-        # Group configs into clusters based on Hamming distance.
+        # 2. Balanced leader clustering by structural Hamming distance.
+        hamming_threshold = max(2, int(n_params * 0.3))
         clusters = {}
-        for cfg in population_configs:
+        for cfg in selected:
             assigned = False
-            for leader in clusters.keys():
+            for leader in clusters:
                 dist = sum(1 for a, b in zip(cfg, leader) if a != b)
-                if dist <= 2:
+                if dist <= hamming_threshold:
                     clusters[leader].append(cfg)
                     assigned = True
                     break
             if not assigned:
                 clusters[cfg] = [cfg]
 
-        local_fos_models = []
-
+        # 3. Per-cluster rank-based MI -> UPGMA FOS.
+        models = []
         for leader, cluster_configs in clusters.items():
-            c_size = len(cluster_configs)
-            if c_size < 2:
-                local_fos_models.append((leader, univariate_fos))
+            if len(cluster_configs) < 2:
+                models.append((leader, univariate_fos))
                 continue
+            MI = self._compute_mi_matrix(cluster_configs)
+            models.append((leader, self._upgma_fos(MI)))
 
-            # 1. Compute Pairwise Mutual Information (MI) for this cluster
-            MI = [[0.0] * n_params for _ in range(n_params)]
-            for i in range(n_params):
-                for j in range(i + 1, n_params):
-                    counts_i = defaultdict(int)
-                    counts_j = defaultdict(int)
-                    counts_ij = defaultdict(int)
-                    for cfg in cluster_configs:
-                        counts_i[cfg[i]] += 1
-                        counts_j[cfg[j]] += 1
-                        counts_ij[(cfg[i], cfg[j])] += 1
-
-                    mi = 0.0
-                    for (val_i, val_j), c_ij in counts_ij.items():
-                        p_ij = c_ij / c_size
-                        p_i = counts_i[val_i] / c_size
-                        p_j = counts_j[val_j] / c_size
-                        mi += p_ij * math.log(p_ij / (p_i * p_j))
-
-                    MI[i][j] = mi
-                    MI[j][i] = mi
-
-            # 2. UPGMA Hierarchical Clustering
-            active_clusters = {i: [i] for i in range(n_params)}
-            next_id = n_params
-
-            fos_list = [(i,) for i in range(n_params)]
-
-            while len(active_clusters) > 1:
-                best_pair = None
-                max_mi = -float('inf')
-                c_ids = list(active_clusters.keys())
-
-                for idx1 in range(len(c_ids)):
-                    for idx2 in range(idx1 + 1, len(c_ids)):
-                        id1, id2 = c_ids[idx1], c_ids[idx2]
-                        c1, c2 = active_clusters[id1], active_clusters[id2]
-                        sum_mi = sum(MI[p1][p2] for p1 in c1 for p2 in c2)
-                        avg_mi = sum_mi / (len(c1) * len(c2))
-
-                        if avg_mi > max_mi:
-                            max_mi = avg_mi
-                            best_pair = (id1, id2)
-
-                # --- Spurious Linkage Prevention (FOS Purity) ---
-                if max_mi <= 1e-6:
-                    break
-                # ------------------------------------------------
-
-                id1, id2 = best_pair
-                merged = active_clusters[id1] + active_clusters[id2]
-                del active_clusters[id1]
-                del active_clusters[id2]
-                active_clusters[next_id] = merged
-                next_id += 1
-
-                if len(merged) < n_params:
-                    fos_list.append(tuple(merged))
-
-            local_fos_models.append((leader, fos_list))
-
-        return local_fos_models
+        return models
 
     # ------------------------------------------------------------------
     # GOMEA Optimal Mixing Operators
@@ -488,19 +565,11 @@ class WMMATuner:
             if len(pop) < 2:
                 continue
 
-            # --- Global Elite Archive Linkage Learning ---
-            # Calculates Mutual Information using the top 50% of ALL valid configurations
-            # found so far. Mathematically proves which parameters (like block
-            # factorizations) must move together to achieve high performance.
-            valid_history =[cfg for cfg, t in seen.items() if t != float('inf')]
-            if len(valid_history) >= 8:
-                valid_history.sort(key=lambda cfg: seen[cfg])
-                elite_size = min(128, max(8, len(valid_history) // 2))
-                learning_configs = valid_history[:elite_size]
-            else:
-                learning_configs =[cfg for _, cfg in pop]
-
-            dynamic_local_fos = self._learn_linkage_tree(learning_configs)
+            # --- Linkage Learning: canonical per-cluster linkage trees ---
+            # Truncation selection + leader clustering + per-cluster MI/UPGMA.
+            # Each individual mixes with its nearest cluster's FOS (below).
+            scored_history = [(cfg, t) for cfg, t in seen.items() if t != float('inf')]
+            cluster_models = self._learn_linkage_tree(scored_history)
             # ---------------------------------------------
 
             # --- Niching: Build the Hall of Fame ---
@@ -546,11 +615,10 @@ class WMMATuner:
 
                 ind_time, ind_cfg = pop[i]
 
-                # Assign to closest local FOS cluster
-                closest_leader, ind_fos = min(
-                    dynamic_local_fos,
-                    key=lambda x: sum(1 for a, b in zip(ind_cfg, x[0]) if a != b)
-                )
+                # Assign to nearest cluster's linkage tree (by Hamming distance).
+                _, ind_fos = min(
+                    cluster_models,
+                    key=lambda m: sum(1 for a, b in zip(ind_cfg, m[0]) if a != b))
 
                 # 1. Gene-pool mixing
                 new_cfg, new_time, improved = self._optimal_mix(
@@ -796,7 +864,7 @@ Examples:
                    help='Eval budget per layout (default: 300)')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--gpu-arch', default='gfx1100')
-    p.add_argument('--max-memory', type=int, default=65336)
+    p.add_argument('--max-memory', type=int, default=65536)
     p.add_argument('--output', default='gemm_config_tuned.json')
     p.add_argument('--overwrite', action='store_true',
                    help='Overwrite existing configs without using them as baselines')

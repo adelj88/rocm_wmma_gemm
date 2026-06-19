@@ -29,7 +29,7 @@ namespace rocm_wmma_gemm
 {
 
 template<typename V, typename T>
-static __forceinline__ __device__ const V& fast_vector_load(const T* buffer, int idx)
+static __forceinline__ __device__ const V& fast_load(const T* buffer, int idx)
 {
     return *reinterpret_cast<const V*>(reinterpret_cast<const char*>(buffer)
                                        + static_cast<unsigned int>(idx)
@@ -37,7 +37,7 @@ static __forceinline__ __device__ const V& fast_vector_load(const T* buffer, int
 }
 
 template<typename V, typename T>
-static __forceinline__ __device__ void fast_vector_store(T* buffer, int idx, const V& value)
+static __forceinline__ __device__ void fast_store(T* buffer, int idx, const V& value)
 {
     *reinterpret_cast<V*>(reinterpret_cast<char*>(buffer)
                           + static_cast<unsigned int>(idx) * static_cast<unsigned int>(sizeof(T)))
@@ -115,7 +115,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     auto load_vector_unchecked = [&]<size_t i>()
     {
         *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = fast_vector_load<vector_type>(input, curr_gload);
+            = fast_load<vector_type>(input, curr_gload);
         curr_gload += gload_stride;
         curr_sstore += sstore_stride;
     };
@@ -131,7 +131,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
         if(curr_col < BLOCK_N)
         {
             *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = fast_vector_load<vector_type>(input, curr_gload);
+                = fast_load<vector_type>(input, curr_gload);
         }
         curr_col += col_stride;
         curr_gload += gload_stride;
@@ -222,7 +222,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
     auto load_vector_unchecked = [&]<size_t i>()
     {
         *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = fast_vector_load<vector_type>(input, curr_gload);
+            = fast_load<vector_type>(input, curr_gload);
         curr_gload += gload_stride;
         curr_sstore += sstore_stride;
     };
@@ -237,7 +237,7 @@ __device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M,
         if(curr_row < BLOCK_M)
         {
             *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = fast_vector_load<vector_type>(input, curr_gload);
+                = fast_load<vector_type>(input, curr_gload);
         }
         curr_row += row_stride;
         curr_gload += gload_stride;
@@ -322,10 +322,9 @@ __device__ __forceinline__ auto
     {
         if(curr_gcol < N && (base_grow + vector_width - 1) < M)
         {
-            fast_vector_store<vector_type>(
-                output,
-                curr_gstore,
-                *reinterpret_cast<const vector_type*>(input + curr_sload));
+            fast_store<vector_type>(output,
+                                    curr_gstore,
+                                    *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
         else if(curr_gcol < N)
         {
@@ -333,7 +332,7 @@ __device__ __forceinline__ auto
             {
                 if((base_grow + v) < M)
                 {
-                    fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                 }
             }
         }
@@ -349,10 +348,9 @@ __device__ __forceinline__ auto
         {
             if(curr_gcol < N && (base_grow + vector_width - 1) < M)
             {
-                fast_vector_store<vector_type>(
-                    output,
-                    curr_gstore,
-                    *reinterpret_cast<const vector_type*>(input + curr_sload));
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
             }
             else if(curr_gcol < N)
             {
@@ -360,7 +358,7 @@ __device__ __forceinline__ auto
                 {
                     if((base_grow + v) < M)
                     {
-                        fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                     }
                 }
             }
@@ -448,10 +446,9 @@ __device__ __forceinline__ auto
     {
         if(curr_grow < M && (base_gcol + vector_width - 1) < N)
         {
-            fast_vector_store<vector_type>(
-                output,
-                curr_gstore,
-                *reinterpret_cast<const vector_type*>(input + curr_sload));
+            fast_store<vector_type>(output,
+                                    curr_gstore,
+                                    *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
         else if(curr_grow < M)
         {
@@ -459,7 +456,7 @@ __device__ __forceinline__ auto
             {
                 if((base_gcol + v) < N)
                 {
-                    fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                 }
             }
         }
@@ -475,10 +472,9 @@ __device__ __forceinline__ auto
         {
             if(curr_grow < M && (base_gcol + vector_width - 1) < N)
             {
-                fast_vector_store<vector_type>(
-                    output,
-                    curr_gstore,
-                    *reinterpret_cast<const vector_type*>(input + curr_sload));
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
             }
             else if(curr_grow < M)
             {
@@ -486,7 +482,7 @@ __device__ __forceinline__ auto
                 {
                     if((base_gcol + v) < N)
                     {
-                        fast_vector_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
                     }
                 }
             }
@@ -583,7 +579,7 @@ public:
 
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[i] = fast_vector_load<vector_type>(input, curr_gload);
+            regs[i] = fast_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -595,7 +591,7 @@ public:
         {
             if(curr_col < BLOCK_N)
             {
-                regs[guaranteed_iters + i] = fast_vector_load<vector_type>(input, curr_gload);
+                regs[guaranteed_iters + i] = fast_load<vector_type>(input, curr_gload);
             }
             curr_col += col_stride;
             curr_gload += gload_stride;
@@ -640,7 +636,7 @@ public:
 
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[i] = fast_vector_load<vector_type>(input, curr_gload);
+            regs[i] = fast_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -652,7 +648,7 @@ public:
         {
             if(curr_row < BLOCK_M)
             {
-                regs[guaranteed_iters + i] = fast_vector_load<vector_type>(input, curr_gload);
+                regs[guaranteed_iters + i] = fast_load<vector_type>(input, curr_gload);
             }
             curr_row += row_stride;
             curr_gload += gload_stride;
@@ -725,7 +721,7 @@ public:
         // Lambda for unchecked loads (guaranteed safe for all threads)
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[static_cast<size_t>(start) + i] = fast_vector_load<vector_type>(input, curr_gload);
+            regs[static_cast<size_t>(start) + i] = fast_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -738,7 +734,7 @@ public:
         {
             if(curr_col < BLOCK_N)
             {
-                regs[remainder_start + i] = fast_vector_load<vector_type>(input, curr_gload);
+                regs[remainder_start + i] = fast_load<vector_type>(input, curr_gload);
             }
             curr_col += col_stride;
             curr_gload += gload_stride;
@@ -813,7 +809,7 @@ public:
         // Lambda for unchecked loads (guaranteed safe for all threads)
         auto fetch_unchecked = [&]<size_t i>()
         {
-            regs[static_cast<size_t>(start) + i] = fast_vector_load<vector_type>(input, curr_gload);
+            regs[static_cast<size_t>(start) + i] = fast_load<vector_type>(input, curr_gload);
             curr_gload += gload_stride;
         };
 
@@ -826,7 +822,7 @@ public:
         {
             if(curr_row < BLOCK_M)
             {
-                regs[remainder_start + i] = fast_vector_load<vector_type>(input, curr_gload);
+                regs[remainder_start + i] = fast_load<vector_type>(input, curr_gload);
             }
             curr_row += row_stride;
             curr_gload += gload_stride;

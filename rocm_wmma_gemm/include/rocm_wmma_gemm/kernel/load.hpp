@@ -45,223 +45,6 @@ static __forceinline__ __device__ void fast_store(T* buffer, int idx, const V& v
 }
 
 /**
- * @brief Loads a block of data from global memory to shared memory (LDS) for column-major layout.
- *
- * @tparam ACCESS The layout of the matrix being accessed.
- * @tparam MAX_BITS Maximum bits for vectorized load operations.
- * @tparam BLOCK_SIZE Number of threads in the block.
- * @tparam BLOCK_M Number of rows in the block.
- * @tparam BLOCK_N Number of columns in the block.
- * @tparam PADDING Padding to add to the leading dimension to avoid bank conflicts.
- * @tparam T The data type of the matrix elements.
- *
- * @param output Pointer to the shared memory destination.
- * @param input Pointer to the global memory source.
- * @param M Number of rows in the global matrix.
- * @param N Number of columns in the global matrix.
- * @param tid Thread ID within the block.
- */
-template<m_layout ACCESS,
-         int      MAX_BITS,
-         int      BLOCK_SIZE,
-         int      BLOCK_M,
-         int      BLOCK_N,
-         int      PADDING,
-         class T>
-__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<ACCESS == m_layout::col_major, void>::type
-{
-    // For col-major, padding is added to the row dimension (leading dimension)
-    constexpr int padded_rows = BLOCK_M + PADDING;
-
-    constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
-    constexpr int min_block_bytes = min_block_dim * sizeof(T);
-
-    constexpr int element_alignment = min_block_bytes / sizeof(T);
-    constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T);
-    constexpr int actual_load_width
-        = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
-
-    using type                 = typename type_selector<T>::type;
-    using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
-    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-
-    constexpr int total_elements     = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors      = total_elements / vector_width;
-    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    // How many iterations are guaranteed safe for all threads?
-    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
-    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
-
-    const int base_idx = tid * vector_width;
-    const int base_col = base_idx / BLOCK_M;
-    const int base_row = base_idx % BLOCK_M;
-
-    constexpr int col_stride    = BLOCK_SIZE * vector_width / BLOCK_M;
-    constexpr int sstore_stride = col_stride * padded_rows;
-    const int     gload_stride  = col_stride * M;
-
-    // Address accumulators shared across both lambda dispatches. The unchecked
-    // dispatch advances them through guaranteed_iterations steps, leaving them
-    // pointing at the correct starting position for the remainder dispatch.
-    // The bounds-check cursor is computed independently for the checked lambda.
-    int curr_gload  = base_col * M + base_row;
-    int curr_sstore = base_col * padded_rows + base_row;
-
-    // Lambda for unchecked loads (guaranteed safe for all threads)
-    auto load_vector_unchecked = [&]<size_t i>()
-    {
-        *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = fast_load<vector_type>(input, curr_gload);
-        curr_gload += gload_stride;
-        curr_sstore += sstore_stride;
-    };
-
-    // Bounds-check cursor — computed independently from the base position and
-    // the number of guaranteed iterations, rather than accumulated through
-    // the unchecked lambda.
-    int curr_col = base_col + guaranteed_iterations * col_stride;
-
-    // Lambda for checked loads (only some threads have valid work)
-    auto load_vector_checked = [&]<size_t i>()
-    {
-        if(curr_col < BLOCK_N)
-        {
-            *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = fast_load<vector_type>(input, curr_gload);
-        }
-        curr_col += col_stride;
-        curr_gload += gload_stride;
-        curr_sstore += sstore_stride;
-    };
-
-    // Execute guaranteed iterations without bounds checks
-    if constexpr(guaranteed_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (load_vector_unchecked.template operator()<i>(), ...);
-        }(std::make_index_sequence<guaranteed_iterations>{});
-    }
-
-    // Execute remainder iterations with bounds checks
-    if constexpr(remainder_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (load_vector_checked.template operator()<i>(), ...);
-        }(std::make_index_sequence<remainder_iterations>{});
-    }
-}
-
-/**
- * @brief Loads a block of data from global memory to shared memory (LDS) for row-major layout.
- *
- * @tparam ACCESS The layout of the matrix being accessed.
- * @tparam MAX_BITS Maximum bits for vectorized load operations.
- * @tparam BLOCK_SIZE Number of threads in the block.
- * @tparam BLOCK_M Number of rows in the block.
- * @tparam BLOCK_N Number of columns in the block.
- * @tparam PADDING Padding to add to the leading dimension to avoid bank conflicts.
- * @tparam T The data type of the matrix elements.
- *
- * @param output Pointer to the shared memory destination.
- * @param input Pointer to the global memory source.
- * @param M Number of rows in the global matrix.
- * @param N Number of columns in the global matrix.
- * @param tid Thread ID within the block.
- */
-template<m_layout ACCESS,
-         int      MAX_BITS,
-         int      BLOCK_SIZE,
-         int      BLOCK_M,
-         int      BLOCK_N,
-         int      PADDING,
-         class T>
-__device__ __forceinline__ auto load_to_shared(T* output, const T* input, int M, int N, int tid) ->
-    typename std::enable_if<ACCESS == m_layout::row_major, void>::type
-{
-    // For row-major, padding is added to the column dimension (leading dimension)
-    constexpr int padded_cols = BLOCK_N + PADDING;
-
-    constexpr int min_block_dim   = (BLOCK_M < BLOCK_N) ? BLOCK_M : BLOCK_N;
-    constexpr int min_block_bytes = min_block_dim * sizeof(T);
-
-    constexpr int element_alignment = min_block_bytes / sizeof(T);
-    constexpr int calculated_width  = element_alignment & (-element_alignment);
-    constexpr int max_bytes         = MAX_BITS / 8;
-    constexpr int max_vector_width  = max_bytes / sizeof(T);
-    constexpr int actual_load_width
-        = (calculated_width > max_vector_width) ? max_vector_width : calculated_width;
-
-    using type                 = typename type_selector<T>::type;
-    using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
-    constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
-
-    constexpr int total_elements     = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors      = total_elements / vector_width;
-    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    // How many iterations are guaranteed safe for all threads?
-    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
-    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
-
-    const int base_idx = tid * vector_width;
-    const int base_row = base_idx / BLOCK_N;
-    const int base_col = base_idx % BLOCK_N;
-
-    constexpr int row_stride    = BLOCK_SIZE * vector_width / BLOCK_N;
-    constexpr int sstore_stride = row_stride * padded_cols;
-    const int     gload_stride  = row_stride * N;
-
-    int curr_gload  = base_row * N + base_col;
-    int curr_sstore = base_row * padded_cols + base_col;
-
-    // Lambda for unchecked loads (guaranteed safe for all threads)
-    auto load_vector_unchecked = [&]<size_t i>()
-    {
-        *reinterpret_cast<vector_type*>(output + curr_sstore)
-            = fast_load<vector_type>(input, curr_gload);
-        curr_gload += gload_stride;
-        curr_sstore += sstore_stride;
-    };
-
-    // Bounds-check cursor — computed independently from the base position and
-    // the number of guaranteed iterations.
-    int curr_row = base_row + guaranteed_iterations * row_stride;
-
-    // Lambda for checked loads (only some threads have valid work)
-    auto load_vector_checked = [&]<size_t i>()
-    {
-        if(curr_row < BLOCK_M)
-        {
-            *reinterpret_cast<vector_type*>(output + curr_sstore)
-                = fast_load<vector_type>(input, curr_gload);
-        }
-        curr_row += row_stride;
-        curr_gload += gload_stride;
-        curr_sstore += sstore_stride;
-    };
-
-    // Execute guaranteed iterations without bounds checks
-    if constexpr(guaranteed_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (load_vector_unchecked.template operator()<i>(), ...);
-        }(std::make_index_sequence<guaranteed_iterations>{});
-    }
-
-    // Execute remainder iterations with bounds checks
-    if constexpr(remainder_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (load_vector_checked.template operator()<i>(), ...);
-        }(std::make_index_sequence<remainder_iterations>{});
-    }
-}
-
-/**
  * @brief Stores a block of data from shared memory (LDS) to global memory for column-major layout.
  *
  * @tparam ACCESS The layout of the matrix being accessed.
@@ -298,11 +81,9 @@ __device__ __forceinline__ auto
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    constexpr int total_elements        = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors         = total_elements / vector_width;
-    constexpr int vectors_per_thread    = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
-    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
+    constexpr int total_elements     = BLOCK_M * BLOCK_N;
+    constexpr int total_vectors      = total_elements / vector_width;
+    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     const int base_idx  = tid * vector_width;
     const int base_lcol = base_idx / BLOCK_M;
@@ -316,9 +97,7 @@ __device__ __forceinline__ auto
     int curr_gstore = curr_gcol * M + base_grow;
     int curr_sload  = base_idx;
 
-    // Lambda for unchecked iterations (guaranteed all threads have valid shared memory indices).
-    // Global boundary checks are still required as the tile may extend beyond the matrix edge.
-    auto store_vector_unchecked = [&]<size_t i>()
+    auto store_vector = [&]<size_t>()
     {
         if(curr_gcol < N && (base_grow + vector_width - 1) < M)
         {
@@ -328,12 +107,10 @@ __device__ __forceinline__ auto
         }
         else if(curr_gcol < N)
         {
-            for(int v = 0; v < vector_width; v++)
+            const int valid = M - base_grow;
+            for(int v = 0; v < valid; ++v)
             {
-                if((base_grow + v) < M)
-                {
-                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
-                }
+                fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
             }
         }
         curr_gcol += col_stride;
@@ -341,48 +118,9 @@ __device__ __forceinline__ auto
         curr_sload += BLOCK_SIZE * vector_width;
     };
 
-    // Lambda for checked iterations (some threads may not have valid work)
-    auto store_vector_checked = [&]<size_t i>()
-    {
-        if(curr_gcol < col + BLOCK_N)
-        {
-            if(curr_gcol < N && (base_grow + vector_width - 1) < M)
-            {
-                fast_store<vector_type>(output,
-                                        curr_gstore,
-                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
-            }
-            else if(curr_gcol < N)
-            {
-                for(int v = 0; v < vector_width; v++)
-                {
-                    if((base_grow + v) < M)
-                    {
-                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
-                    }
-                }
-            }
-        }
-        curr_gcol += col_stride;
-        curr_gstore += gstore_stride;
-        curr_sload += BLOCK_SIZE * vector_width;
-    };
-
-    // Execute guaranteed iterations
-    if constexpr(guaranteed_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (store_vector_unchecked.template operator()<i>(), ...);
-        }(std::make_index_sequence<guaranteed_iterations>{});
-    }
-
-    // Execute remainder iterations
-    if constexpr(remainder_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (store_vector_checked.template operator()<i>(), ...);
-        }(std::make_index_sequence<remainder_iterations>{});
-    }
+    [&]<size_t... i>(std::index_sequence<i...>) {
+        (store_vector.template operator()<i>(), ...);
+    }(std::make_index_sequence<vectors_per_thread>{});
 }
 
 /**
@@ -422,11 +160,9 @@ __device__ __forceinline__ auto
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    constexpr int total_elements        = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors         = total_elements / vector_width;
-    constexpr int vectors_per_thread    = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
-    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
+    constexpr int total_elements     = BLOCK_M * BLOCK_N;
+    constexpr int total_vectors      = total_elements / vector_width;
+    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     const int base_idx  = tid * vector_width;
     const int base_lrow = base_idx / BLOCK_N;
@@ -440,9 +176,7 @@ __device__ __forceinline__ auto
     int curr_gstore = curr_grow * N + base_gcol;
     int curr_sload  = base_idx;
 
-    // Lambda for unchecked iterations (guaranteed all threads have valid shared memory indices).
-    // Global boundary checks are still required as the tile may extend beyond the matrix edge.
-    auto store_vector_unchecked = [&]<size_t i>()
+    auto store_vector = [&]<size_t>()
     {
         if(curr_grow < M && (base_gcol + vector_width - 1) < N)
         {
@@ -452,12 +186,10 @@ __device__ __forceinline__ auto
         }
         else if(curr_grow < M)
         {
-            for(int v = 0; v < vector_width; v++)
+            const int valid = N - base_gcol;
+            for(int v = 0; v < valid; ++v)
             {
-                if((base_gcol + v) < N)
-                {
-                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
-                }
+                fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
             }
         }
         curr_grow += row_stride;
@@ -465,48 +197,9 @@ __device__ __forceinline__ auto
         curr_sload += BLOCK_SIZE * vector_width;
     };
 
-    // Lambda for checked iterations (some threads may not have valid work)
-    auto store_vector_checked = [&]<size_t i>()
-    {
-        if(curr_grow < row + BLOCK_M)
-        {
-            if(curr_grow < M && (base_gcol + vector_width - 1) < N)
-            {
-                fast_store<vector_type>(output,
-                                        curr_gstore,
-                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
-            }
-            else if(curr_grow < M)
-            {
-                for(int v = 0; v < vector_width; v++)
-                {
-                    if((base_gcol + v) < N)
-                    {
-                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
-                    }
-                }
-            }
-        }
-        curr_grow += row_stride;
-        curr_gstore += gstore_stride;
-        curr_sload += BLOCK_SIZE * vector_width;
-    };
-
-    // Execute guaranteed iterations
-    if constexpr(guaranteed_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (store_vector_unchecked.template operator()<i>(), ...);
-        }(std::make_index_sequence<guaranteed_iterations>{});
-    }
-
-    // Execute remainder iterations
-    if constexpr(remainder_iterations > 0)
-    {
-        [&]<size_t... i>(std::index_sequence<i...>) {
-            (store_vector_checked.template operator()<i>(), ...);
-        }(std::make_index_sequence<remainder_iterations>{});
-    }
+    [&]<size_t... i>(std::index_sequence<i...>) {
+        (store_vector.template operator()<i>(), ...);
+    }(std::make_index_sequence<vectors_per_thread>{});
 }
 
 /**

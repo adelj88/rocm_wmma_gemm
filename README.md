@@ -181,7 +181,8 @@ bash generate_report.sh --wmma-bin ../build/benchmark/bench_half_half --rocblas-
 ## Future Plans
 1. Enable building 2 targets together to allow for dynamic selection based on GPU.
 2. Add batched unit tests.
-3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K).s
+3. Explore mapping specializations for layout C = column-major.
+3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K).
 4. Modify fragments to support RDNA4 WMMA.
 
 ## License

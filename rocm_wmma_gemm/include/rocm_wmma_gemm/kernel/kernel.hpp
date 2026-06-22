@@ -58,6 +58,18 @@ struct wave_config : wave_config_base<warps_m, warps_n>
 };
 
 /**
+ * @brief Wave configuration specialization for col-major A and row-major B.
+ */
+template<int warps_m, int warps_n>
+struct wave_config<m_layout::col_major, m_layout::row_major, warps_m, warps_n>
+    : wave_config_base<warps_m, warps_n>
+{
+    using base               = wave_config_base<warps_m, warps_n>;
+    static constexpr int min = 4;
+    static constexpr int max = 8;
+};
+
+/**
  * @brief Wave configuration specialization for row-major A and col-major B.
  */
 template<int warps_m, int warps_n>
@@ -425,161 +437,132 @@ __device__ __forceinline__ void gemm_impl(
 
     __syncthreads();
 
-    // Calculate memory requirements
-    constexpr int c_tile_bytes           = block_m * block_n * sizeof(T);
-    constexpr int available_shared_bytes = 2 * lds_size * sizeof(U);
+    constexpr bool is_col_major = (LAYOUT_C == m_layout::col_major);
 
-    constexpr bool is_col_major   = (LAYOUT_C == m_layout::col_major);
-    constexpr int  chunk_elements = available_shared_bytes / sizeof(T);
+    constexpr int chunk_rows = wmma_tile;
+    constexpr int chunk_cols = wmma_tile;
 
-    if constexpr(is_col_major)
+    constexpr int num_chunks = is_col_major ? (warps_n * warp_tile_n) : (warps_m * warp_tile_m);
+
+    constexpr int available_bytes   = 2 * lds_size * static_cast<int>(sizeof(U));
+    constexpr int chunk_slice_bytes = is_col_major
+                                          ? (block_m * chunk_cols * static_cast<int>(sizeof(T)))
+                                          : (chunk_rows * block_n * static_cast<int>(sizeof(T)));
+
+    // Store two chunks per LDS buffer when they fit, halving sync and flush count.
+    constexpr bool can_pair = (2 * chunk_slice_bytes <= available_bytes);
+
+    T* c_buf = reinterpret_cast<T*>(lds_mem);
+
+    auto store_chunk = [&]<size_t ci>(T* buf, int local_offset)
     {
-        // Chunk by columns - align to wmma_tile boundaries
-        constexpr int raw_cols_per_chunk = chunk_elements / block_m;
-        constexpr int cols_per_chunk     = (raw_cols_per_chunk / wmma_tile) * wmma_tile;
-        constexpr int num_chunks         = (block_n + cols_per_chunk - 1) / cols_per_chunk;
-        constexpr int last_chunk_cols    = block_n - ((num_chunks - 1) * cols_per_chunk);
-
-        auto process_chunk = [&]<size_t ci>()
+        if constexpr(is_col_major)
         {
-            constexpr int col_start = static_cast<int>(ci) * cols_per_chunk;
-            constexpr int chunk_cols
-                = (static_cast<int>(ci) == num_chunks - 1) ? last_chunk_cols : cols_per_chunk;
+            constexpr int responsible_warp_col = static_cast<int>(ci) / warp_tile_n;
+            constexpr int wn_idx               = static_cast<int>(ci) % warp_tile_n;
+            constexpr int buf_cols             = can_pair ? 2 * chunk_cols : chunk_cols;
 
-            T* c_chunk = reinterpret_cast<T*>(lds_mem);
-
-            auto dispatch_col = [&]<size_t w_col>()
+            if(warp_col == responsible_warp_col)
             {
-                constexpr int c_warp_n_base = static_cast<int>(w_col) * warp_tile_n * wmma_tile;
-
-                auto store_wm = [&]<size_t wm>()
+                [&]<size_t... wm>(std::index_sequence<wm...>)
                 {
-                    const int local_row
-                        = warp_m_base + static_cast<int>(wm) * wmma_tile + half_warp_id;
-
-                    auto store_wn = [&]<size_t wn>()
-                    {
-                        constexpr int tile_col = c_warp_n_base + static_cast<int>(wn) * wmma_tile;
-
-                        if constexpr(tile_col >= col_start && tile_col < col_start + chunk_cols)
-                        {
-                            const int local_col = tile_col + half_lane;
-                            store_matrix<LAYOUT_C, true>(c_chunk,
-                                                         c_frags[wm][wn],
-                                                         local_row,
-                                                         local_col - col_start,
-                                                         block_m,
-                                                         chunk_cols);
-                        }
-                    };
-
-                    [&]<size_t... wn>(std::index_sequence<wn...>) {
-                        (store_wn.template operator()<wn>(), ...);
-                    }(std::make_index_sequence<warp_tile_n>{});
-                };
-
-                [&]<size_t... wm>(std::index_sequence<wm...>) {
-                    (store_wm.template operator()<wm>(), ...);
+                    (store_matrix<LAYOUT_C, true>(buf,
+                                                  c_frags[wm][wn_idx],
+                                                  warp_m_base + static_cast<int>(wm) * wmma_tile
+                                                      + half_warp_id,
+                                                  local_offset + half_lane,
+                                                  block_m,
+                                                  buf_cols),
+                     ...);
                 }(std::make_index_sequence<warp_tile_m>{});
-            };
+            }
+        }
+        else
+        {
+            constexpr int responsible_warp_row = static_cast<int>(ci) / warp_tile_m;
+            constexpr int wm_idx               = static_cast<int>(ci) % warp_tile_m;
+            constexpr int buf_rows             = can_pair ? 2 * chunk_rows : chunk_rows;
 
-            [&]<size_t... Is>(std::index_sequence<Is...>) {
-                (...,
-                 (warp_col == static_cast<int>(Is) ? dispatch_col.template operator()<Is>()
-                                                   : void()));
-            }(std::make_index_sequence<warps_n>{});
+            if(warp_row == responsible_warp_row)
+            {
+                [&]<size_t... wn>(std::index_sequence<wn...>)
+                {
+                    (store_matrix<LAYOUT_C, true>(buf,
+                                                  c_frags[wm_idx][wn],
+                                                  local_offset + half_warp_id,
+                                                  warp_n_base + static_cast<int>(wn) * wmma_tile
+                                                      + half_lane,
+                                                  buf_rows,
+                                                  block_n),
+                     ...);
+                }(std::make_index_sequence<warp_tile_n>{});
+            }
+        }
+    };
 
-            __syncthreads();
+    auto flush_chunk = [&]<size_t ci, int STEP>(T* buf)
+    {
+        if constexpr(is_col_major)
+        {
+            load_shared_to_global<LAYOUT_C, bits, full_block, block_m, STEP>(
+                C,
+                buf,
+                block_row,
+                block_col + static_cast<int>(ci) * wmma_tile,
+                M,
+                N,
+                tid);
+        }
+        else
+        {
+            load_shared_to_global<LAYOUT_C, bits, full_block, STEP, block_n>(
+                C,
+                buf,
+                block_row + static_cast<int>(ci) * wmma_tile,
+                block_col,
+                M,
+                N,
+                tid);
+        }
+    };
 
-            load_shared_to_global<LAYOUT_C, bits, full_block, block_m, chunk_cols>(C,
-                                                                                   c_chunk,
-                                                                                   block_row,
-                                                                                   block_col
-                                                                                       + col_start,
-                                                                                   M,
-                                                                                   N,
-                                                                                   tid);
+    if constexpr(can_pair)
+    {
+        static_assert(num_chunks % 2 == 0,
+                      "num_chunks must be even (warps and warp_tiles are powers of two)");
+        constexpr int num_pairs = num_chunks / 2;
 
-            __syncthreads();
-        };
+        [&]<size_t... pi>(std::index_sequence<pi...>)
+        {
+            (
+                [&]()
+                {
+                    constexpr size_t ci0 = pi * 2;
+                    constexpr size_t ci1 = ci0 + 1;
 
-        [&]<size_t... ci>(std::index_sequence<ci...>)
-        { (process_chunk.template operator()<ci>(), ...); }(std::make_index_sequence<num_chunks>{});
+                    store_chunk.template operator()<ci0>(c_buf, 0);
+                    store_chunk.template operator()<ci1>(c_buf, wmma_tile);
+                    __syncthreads();
+                    flush_chunk.template operator()<ci0, 2 * wmma_tile>(c_buf);
+                    __syncthreads();
+                }(),
+                ...);
+        }(std::make_index_sequence<num_pairs>{});
     }
-    else // row_major
+    else
     {
-        // Chunk by rows - align to wmma_tile boundaries
-        constexpr int raw_rows_per_chunk = chunk_elements / block_n;
-        constexpr int rows_per_chunk     = (raw_rows_per_chunk / wmma_tile) * wmma_tile;
-        constexpr int num_chunks         = (block_m + rows_per_chunk - 1) / rows_per_chunk;
-        constexpr int last_chunk_rows    = block_m - ((num_chunks - 1) * rows_per_chunk);
-
-        auto process_chunk = [&]<size_t ci>()
-        {
-            constexpr int row_start = static_cast<int>(ci) * rows_per_chunk;
-            constexpr int chunk_rows
-                = (static_cast<int>(ci) == num_chunks - 1) ? last_chunk_rows : rows_per_chunk;
-
-            T* c_chunk = reinterpret_cast<T*>(lds_mem);
-
-            auto dispatch_row = [&]<size_t w_row>()
-            {
-                constexpr int c_warp_m_base = static_cast<int>(w_row) * warp_tile_m * wmma_tile;
-
-                auto store_wm = [&]<size_t wm>()
-                {
-                    constexpr int tile_row = c_warp_m_base + static_cast<int>(wm) * wmma_tile;
-
-                    if constexpr(tile_row >= row_start && tile_row < row_start + chunk_rows)
-                    {
-                        const int local_row = tile_row + half_warp_id;
-                        const int chunk_row = local_row - row_start;
-
-                        auto store_wn = [&]<size_t wn>()
-                        {
-                            const int local_col
-                                = warp_n_base + static_cast<int>(wn) * wmma_tile + half_lane;
-                            store_matrix<LAYOUT_C, true>(c_chunk,
-                                                         c_frags[wm][wn],
-                                                         chunk_row,
-                                                         local_col,
-                                                         chunk_rows,
-                                                         block_n);
-                        };
-
-                        [&]<size_t... wn>(std::index_sequence<wn...>) {
-                            (store_wn.template operator()<wn>(), ...);
-                        }(std::make_index_sequence<warp_tile_n>{});
-                    }
-                };
-
-                [&]<size_t... wm>(std::index_sequence<wm...>) {
-                    (store_wm.template operator()<wm>(), ...);
-                }(std::make_index_sequence<warp_tile_m>{});
-            };
-
-            [&]<size_t... Is>(std::index_sequence<Is...>) {
-                (...,
-                 (warp_row == static_cast<int>(Is) ? dispatch_row.template operator()<Is>()
-                                                   : void()));
-            }(std::make_index_sequence<warps_m>{});
-
-            __syncthreads();
-
-            load_shared_to_global<LAYOUT_C, bits, full_block, chunk_rows, block_n>(C,
-                                                                                   c_chunk,
-                                                                                   block_row
-                                                                                       + row_start,
-                                                                                   block_col,
-                                                                                   M,
-                                                                                   N,
-                                                                                   tid);
-
-            __syncthreads();
-        };
-
         [&]<size_t... ci>(std::index_sequence<ci...>)
-        { (process_chunk.template operator()<ci>(), ...); }(std::make_index_sequence<num_chunks>{});
+        {
+            (
+                [&]()
+                {
+                    store_chunk.template operator()<ci>(c_buf, 0);
+                    __syncthreads();
+                    flush_chunk.template operator()<ci, wmma_tile>(c_buf);
+                    __syncthreads();
+                }(),
+                ...);
+        }(std::make_index_sequence<num_chunks>{});
     }
 }
 

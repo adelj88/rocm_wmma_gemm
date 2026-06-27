@@ -49,29 +49,34 @@ Testing on AMD RX 7900 GRE (gfx1100) and 8060S (gfx1151) reveals distinct perfor
 ### Build Steps
 1. Clone the repository:
    ```bash
-   git https://github.com/adelj88/rocm_wmma_gemm.git
+   git clone https://github.com/adelj88/rocm_wmma_gemm.git
    cd rocm_wmma_gemm
    ```
-2. Build:
+2. Place tuned config files in `rocm_wmma_gemm/config/` before building (see [Automatic Kernel Tuning](#automatic-kernel-tuning)). Config files are named `gemm_config_<arch>_f16.json` (for f16/bf16 types) and optionally `gemm_config_<arch>_f32.json` (for float accumulator types).
+
+3. Build:
    ```bash
-   mkdir build
-   cd build
-   # build for gfx1100
-   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGET=gfx1100 ..
-   # build for gfx1151
-   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGET=gfx1151 ..
+   mkdir build && cd build
+
+   # Single architecture
+   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGETS=gfx1151 ..
+
+   # Multiple architectures in one build
+   CXX=/opt/rocm/bin/amdclang++ cmake -DGPU_TARGETS="gfx1100;gfx1151" ..
+
    make
    ```
+   Each target arch produces its own shared library (`librocm_wmma_gemm_<arch>.so`). Applications link against `rocm_wmma_gemm_loader` and the correct library is selected at runtime based on the active GPU.
 
 ### Usage
-Run the executable after building:
 ```bash
 # Assumes you're currently in /build directory
-# To run unit tests
+
+# Unit tests
 ./test/test_float_accum
 ./test/test_same_prec
 
-# To run unit benchmarks
+# Benchmarks
 ./benchmark/bench_bf16_bf16
 ./benchmark/bench_float_bf16
 ./benchmark/bench_float_half
@@ -79,9 +84,9 @@ Run the executable after building:
 
 # Pass custom sizes
 ./benchmark/bench_half_half --shapes 4096,4096,2048:4096,5120,5120
-./benchmark/bench_half_half --shapes 2048:4096 # passes squares
+./benchmark/bench_half_half --shapes 2048:4096   # square matrices
 
-# To run rocblas equivalent for verification
+# rocBLAS comparison
 ./test/test_rocblas
 ./benchmark/bench_rocblas
 ```
@@ -103,12 +108,25 @@ The tuner leverages advanced mechanics to efficiently explore the discrete param
 - **Layout Sharing & Competitive Baselines**: Reuses row-major C configs as baselines for col-major C runs, racing them against input files to halve the budget.
 - **Stagnation Termination**: Terminates small populations that bounce between local optima, reallocating the evaluation budget to larger, exploratory populations.
 
+#### **Config file naming**
+Tuned configs are stored per-arch per-type-group:
+- `gemm_config_<arch>_f16.json` — covers `f16_f16` and `bf16_bf16` (shared configs, same tile shapes)
+- `gemm_config_<arch>_f32.json` — covers `f32_f16` and `f32_bf16` (float accumulator, optional — falls back to f16 configs if absent)
+
+Place these files in `rocm_wmma_gemm/config/` before building.
+
 To run the tuner:
 ```bash
 cd build
 
-# Default behavior (standard benchmark sizes and all layouts)
-python3 tune.py # Results written to gemm_config_tuned.json
+# Tune f16/bf16 configs (default type, output: gemm_config_gfx1151_f16.json)
+python3 tune.py --gpu-arch gfx1151
+
+# Tune float accumulator configs (output: gemm_config_gfx1151_f32.json)
+python3 tune.py --gpu-arch gfx1151 --type f32_f16
+
+# Tune bf16_bf16 specifically
+python3 tune.py --gpu-arch gfx1151 --type bf16_bf16
 
 # Test specific sizes
 python3 tune.py --sizes 1024,1024,1024 2048,2048,2048
@@ -122,41 +140,40 @@ python3 tune.py --layouts r,c,r c,c,c
 # Reproducible results with specific seed
 python3 tune.py --seed 123
 
-# Different GPU architecture
-python3 tune.py --gpu-arch gfx1103
-
 # Resume tuning using an existing config as a baseline
-python3 tune.py --input gemm_config.json
+python3 tune.py --input gemm_config_gfx1151_f16.json
 
 # Force overwrite existing configs (don't use them as baseline)
-python3 tune.py --input gemm_config.json --overwrite
+python3 tune.py --input gemm_config_gfx1151_f16.json --overwrite
 
 # Custom output file
 python3 tune.py --output my_config.json
 ```
 
 ### Configuration Racing
-The library includes a WMMA configuration racing tool (`race.py`) to competitively compare kernel configurations against each other and verify the best performer.
+The library includes a racing tool (`race.py`) to competitively compare kernel configurations against each other and verify the best performer.
 
 #### **Racing Modes**
-- **File vs File Racing**: Compares two configuration JSON files and outputs a new merged configuration containing only the best performing configs.
-- **Cross-Layout Sanity Check**: For a given matrix size and A/B layout, it verifies if the row-major C configuration is genuinely faster than the column-major C configuration (and vice versa) by evaluating both configurations on both output layouts.
+- **File vs File Racing**: Compares two configuration JSON files and outputs a merged configuration containing only the best performing configs.
+- **Cross-Layout Sanity Check**: For a given matrix size and A/B layout, verifies if the row-major C configuration is genuinely faster than the column-major C configuration (and vice versa) by evaluating both on both output layouts.
 
-To run the racer:
 ```bash
 cd build
 
-# Race two config files against each other (saves best to gemm_config_raced.json)
-python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json
+# Race two config files (saves best to gemm_config_raced.json)
+python3 race.py --config1 gemm_config_gfx1151_f16.json --config2 other_config.json
 
-# Run a cross-layout sanity check on a single config file
-python3 race.py --config1 gemm_config.json --cross-check
+# Race float accumulator configs
+python3 race.py --config1 gemm_config_gfx1151_f32.json --config2 other_f32.json --type f32_f16
 
-# Adjust number of benchmark repetitions to find the median (default is 5)
-python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json --repeats 10
+# Cross-layout sanity check
+python3 race.py --config1 gemm_config_gfx1151_f16.json --cross-check
+
+# Adjust number of benchmark repetitions (default: 5)
+python3 race.py --config1 config1.json --config2 config2.json --repeats 10
 
 # Custom output file
-python3 race.py --config1 gemm_config_1.json --config2 gemm_config_2.json --output winner.json
+python3 race.py --config1 config1.json --config2 config2.json --output winner.json
 ```
 
 ## Performance Results
@@ -179,11 +196,11 @@ bash generate_report.sh --wmma-bin ../build/benchmark/bench_half_half --rocblas-
 ```
 
 ## Future Plans
-1. Enable building 2 targets together to allow for dynamic selection based on GPU.
-2. Add batched unit tests.
-3. Explore mapping specializations for layout C = column-major.
-3. Explore any possibility of further optimizations (e.g. Stream-K for smaller M, N, K).
-4. Modify fragments to support RDNA4 WMMA.
+1. Add batched unit tests.
+2. Tune and add config files for float accumulator types (`f32_f16`, `f32_bf16`).
+3. Add int4/int8 calls; after that test and tune for these new types.
+4. Explore further optimizations (e.g. Stream-K).
+5. RDNA4 support — the 32×8 fragment shape changes the lane→element mapping.
 
 ## License
 

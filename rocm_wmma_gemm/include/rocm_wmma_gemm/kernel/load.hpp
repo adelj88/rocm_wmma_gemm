@@ -62,7 +62,13 @@ static __forceinline__ __device__ void fast_store(T* buffer, int idx, const V& v
  * @param N Number of columns in the global matrix.
  * @param tid Thread ID within the block.
  */
-template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS,
+         int      MAX_BITS,
+         int      BLOCK_SIZE,
+         int      BLOCK_M,
+         int      BLOCK_N,
+         bool     IS_ALIGNED,
+         class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::col_major, void>::type
@@ -81,14 +87,16 @@ __device__ __forceinline__ auto
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    constexpr int total_elements     = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors      = total_elements / vector_width;
-    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    constexpr int total_elements        = BLOCK_M * BLOCK_N;
+    constexpr int total_vectors         = total_elements / vector_width;
+    constexpr int vectors_per_thread    = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
+    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
 
     const int base_idx  = tid * vector_width;
     const int base_lcol = base_idx / BLOCK_M;
     const int base_lrow = base_idx % BLOCK_M;
-    const int base_grow = row + base_lrow; // invariant across iterations
+    const int base_grow = row + base_lrow;
 
     constexpr int col_stride    = BLOCK_SIZE * vector_width / BLOCK_M;
     const int     gstore_stride = col_stride * M;
@@ -97,20 +105,30 @@ __device__ __forceinline__ auto
     int curr_gstore = curr_gcol * M + base_grow;
     int curr_sload  = base_idx;
 
-    auto store_vector = [&]<size_t>()
+    // Iterations guaranteed to have valid LDS data — no LDS-bounds check needed.
+    auto store_vector_unchecked = [&]<size_t>()
     {
-        if(curr_gcol < N && (base_grow + vector_width - 1) < M)
+        if constexpr(IS_ALIGNED)
         {
             fast_store<vector_type>(output,
                                     curr_gstore,
                                     *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
-        else if(curr_gcol < N)
+        else
         {
-            const int valid = M - base_grow;
-            for(int v = 0; v < valid; ++v)
+            if(curr_gcol < N && (base_grow + vector_width - 1) < M)
             {
-                fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+            }
+            else if(curr_gcol < N)
+            {
+                const int valid = M - base_grow;
+                for(int v = 0; v < valid; ++v)
+                {
+                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                }
             }
         }
         curr_gcol += col_stride;
@@ -118,9 +136,55 @@ __device__ __forceinline__ auto
         curr_sload += BLOCK_SIZE * vector_width;
     };
 
-    [&]<size_t... i>(std::index_sequence<i...>) {
-        (store_vector.template operator()<i>(), ...);
-    }(std::make_index_sequence<vectors_per_thread>{});
+    // Remainder iterations: some threads have no valid LDS data (when total_vectors
+    // is not a multiple of BLOCK_SIZE). Guard against reading past the LDS tile.
+    auto store_vector_checked = [&]<size_t>()
+    {
+        if(curr_gcol < col + BLOCK_N)
+        {
+            if constexpr(IS_ALIGNED)
+            {
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+            }
+            else
+            {
+                if(curr_gcol < N && (base_grow + vector_width - 1) < M)
+                {
+                    fast_store<vector_type>(
+                        output,
+                        curr_gstore,
+                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+                }
+                else if(curr_gcol < N)
+                {
+                    const int valid = M - base_grow;
+                    for(int v = 0; v < valid; ++v)
+                    {
+                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                    }
+                }
+            }
+        }
+        curr_gcol += col_stride;
+        curr_gstore += gstore_stride;
+        curr_sload += BLOCK_SIZE * vector_width;
+    };
+
+    if constexpr(guaranteed_iterations > 0)
+    {
+        [&]<size_t... i>(std::index_sequence<i...>) {
+            (store_vector_unchecked.template operator()<i>(), ...);
+        }(std::make_index_sequence<guaranteed_iterations>{});
+    }
+
+    if constexpr(remainder_iterations > 0)
+    {
+        [&]<size_t... i>(std::index_sequence<i...>) {
+            (store_vector_checked.template operator()<i>(), ...);
+        }(std::make_index_sequence<remainder_iterations>{});
+    }
 }
 
 /**
@@ -141,7 +205,13 @@ __device__ __forceinline__ auto
  * @param N Number of columns in the global matrix.
  * @param tid Thread ID within the block.
  */
-template<m_layout ACCESS, int MAX_BITS, int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, class T>
+template<m_layout ACCESS,
+         int      MAX_BITS,
+         int      BLOCK_SIZE,
+         int      BLOCK_M,
+         int      BLOCK_N,
+         bool     IS_ALIGNED,
+         class T>
 __device__ __forceinline__ auto
     load_shared_to_global(T* output, T* input, int row, int col, int M, int N, int tid) ->
     typename std::enable_if<ACCESS == m_layout::row_major, void>::type
@@ -160,14 +230,16 @@ __device__ __forceinline__ auto
     using vector_type          = type __attribute__((ext_vector_type(actual_load_width)));
     constexpr int vector_width = (sizeof(vector_type) / sizeof(T));
 
-    constexpr int total_elements     = BLOCK_M * BLOCK_N;
-    constexpr int total_vectors      = total_elements / vector_width;
-    constexpr int vectors_per_thread = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    constexpr int total_elements        = BLOCK_M * BLOCK_N;
+    constexpr int total_vectors         = total_elements / vector_width;
+    constexpr int vectors_per_thread    = (total_vectors + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    constexpr int guaranteed_iterations = total_vectors / BLOCK_SIZE;
+    constexpr int remainder_iterations  = vectors_per_thread - guaranteed_iterations;
 
     const int base_idx  = tid * vector_width;
     const int base_lrow = base_idx / BLOCK_N;
     const int base_lcol = base_idx % BLOCK_N;
-    const int base_gcol = col + base_lcol; // invariant across iterations
+    const int base_gcol = col + base_lcol;
 
     constexpr int row_stride    = BLOCK_SIZE * vector_width / BLOCK_N;
     const int     gstore_stride = row_stride * N;
@@ -176,20 +248,30 @@ __device__ __forceinline__ auto
     int curr_gstore = curr_grow * N + base_gcol;
     int curr_sload  = base_idx;
 
-    auto store_vector = [&]<size_t>()
+    // Iterations guaranteed to have valid LDS data — no LDS-bounds check needed.
+    auto store_vector_unchecked = [&]<size_t>()
     {
-        if(curr_grow < M && (base_gcol + vector_width - 1) < N)
+        if constexpr(IS_ALIGNED)
         {
             fast_store<vector_type>(output,
                                     curr_gstore,
                                     *reinterpret_cast<const vector_type*>(input + curr_sload));
         }
-        else if(curr_grow < M)
+        else
         {
-            const int valid = N - base_gcol;
-            for(int v = 0; v < valid; ++v)
+            if(curr_grow < M && (base_gcol + vector_width - 1) < N)
             {
-                fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+            }
+            else if(curr_grow < M)
+            {
+                const int valid = N - base_gcol;
+                for(int v = 0; v < valid; ++v)
+                {
+                    fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                }
             }
         }
         curr_grow += row_stride;
@@ -197,9 +279,55 @@ __device__ __forceinline__ auto
         curr_sload += BLOCK_SIZE * vector_width;
     };
 
-    [&]<size_t... i>(std::index_sequence<i...>) {
-        (store_vector.template operator()<i>(), ...);
-    }(std::make_index_sequence<vectors_per_thread>{});
+    // Remainder iterations: some threads have no valid LDS data (when total_vectors
+    // is not a multiple of BLOCK_SIZE). Guard against reading past the LDS tile.
+    auto store_vector_checked = [&]<size_t>()
+    {
+        if(curr_grow < row + BLOCK_M)
+        {
+            if constexpr(IS_ALIGNED)
+            {
+                fast_store<vector_type>(output,
+                                        curr_gstore,
+                                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+            }
+            else
+            {
+                if(curr_grow < M && (base_gcol + vector_width - 1) < N)
+                {
+                    fast_store<vector_type>(
+                        output,
+                        curr_gstore,
+                        *reinterpret_cast<const vector_type*>(input + curr_sload));
+                }
+                else if(curr_grow < M)
+                {
+                    const int valid = N - base_gcol;
+                    for(int v = 0; v < valid; ++v)
+                    {
+                        fast_store<T>(output, curr_gstore + v, input[curr_sload + v]);
+                    }
+                }
+            }
+        }
+        curr_grow += row_stride;
+        curr_gstore += gstore_stride;
+        curr_sload += BLOCK_SIZE * vector_width;
+    };
+
+    if constexpr(guaranteed_iterations > 0)
+    {
+        [&]<size_t... i>(std::index_sequence<i...>) {
+            (store_vector_unchecked.template operator()<i>(), ...);
+        }(std::make_index_sequence<guaranteed_iterations>{});
+    }
+
+    if constexpr(remainder_iterations > 0)
+    {
+        [&]<size_t... i>(std::index_sequence<i...>) {
+            (store_vector_checked.template operator()<i>(), ...);
+        }(std::make_index_sequence<remainder_iterations>{});
+    }
 }
 
 /**

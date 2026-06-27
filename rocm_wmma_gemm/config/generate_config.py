@@ -5,76 +5,73 @@ import argparse
 from pathlib import Path
 from collections import defaultdict
 
-def generate_config_header(config_file, output_file):
-    with open(config_file, 'r') as f:
-        config = json.load(f)
+def load_configs(f16_config_file, f32_config_file=None):
+    """Load one or two config files and tag each entry with its type_group.
+    type_group 0 = f16/bf16 (from f16 file), type_group 1 = f32 (from f32 file).
+    Returns (all_confs, unique_configs_sorted).
+    """
+    all_confs = []
 
-    # Extract unique configurations
+    with open(f16_config_file, 'r') as f:
+        cfg = json.load(f)
+    for conf in cfg['configurations']:
+        all_confs.append((conf, 0))  # type_group 0
+
+    if f32_config_file:
+        with open(f32_config_file, 'r') as f:
+            cfg = json.load(f)
+        for conf in cfg['configurations']:
+            all_confs.append((conf, 1))  # type_group 1
+
     unique_configs = set()
-    for conf in config['configurations']:
-        cfg = conf['config']
-        unique_configs.add((cfg['warps_m'], cfg['warps_n'],
-                            cfg['warp_tile_m'], cfg['warp_tile_n'],
-                            cfg['swizzle'],
-                            cfg['bits']))
+    for conf, _ in all_confs:
+        c = conf['config']
+        unique_configs.add((c['warps_m'], c['warps_n'],
+                            c['warp_tile_m'], c['warp_tile_n'],
+                            c['swizzle'], c['bits']))
 
-    # Always add default configs if not present
-    default_configs = [
-        (4, 4, 4, 4, 8, 256)
-    ]
-    for default_config in default_configs:
-        if default_config not in unique_configs:
-            unique_configs.add(default_config)
+    default_configs = [(4, 4, 4, 4, 8, 256)]
+    for dc in default_configs:
+        if dc not in unique_configs:
+            unique_configs.add(dc)
 
-    # Sort configs for stable output and indexing
-    unique_configs = sorted(list(unique_configs))
+    return all_confs, sorted(list(unique_configs))
+
+
+def generate_config_header(f16_config_file, output_file, f32_config_file=None):
+    all_confs, unique_configs = load_configs(f16_config_file, f32_config_file)
     num_configs = len(unique_configs)
 
-    # Group configurations by matrix dimensions and ALL THREE layouts (A, B, C)
+    # Build sorted_config_map entries: one per (type_group, M, N, K, layouts).
+    # type_group is included in config_key so f32 entries are distinct from f16.
     size_layout_configs = {}
-    for conf in config['configurations']:
+    for conf, type_group in all_confs:
         range_info = conf['range']
         M, N, K = range_info['M'], range_info['N'], range_info['K']
-
-        # Create key for this matrix size
-        size_key = (M, N, K)
-
-        # Create layout key from (A, B, C) - all three matter now
         layout_dict = conf['layout']
         layout_key = (
             layout_dict.get('A', 'any'),
             layout_dict.get('B', 'any'),
-            layout_dict.get('C', 'any')  # Include C layout
+            layout_dict.get('C', 'any'),
         )
-
-        if size_key not in size_layout_configs:
-            size_layout_configs[size_key] = {}
-
-        cfg = conf['config']
-        config_tuple = (cfg['warps_m'], cfg['warps_n'],
-                        cfg['warp_tile_m'], cfg['warp_tile_n'],
-                        cfg['swizzle'],
-                        cfg['bits'])
+        c = conf['config']
+        config_tuple = (c['warps_m'], c['warps_n'],
+                        c['warp_tile_m'], c['warp_tile_n'],
+                        c['swizzle'], c['bits'])
         config_idx = unique_configs.index(config_tuple)
+        size_layout_configs.setdefault((M, N, K), {})[(type_group, layout_key)] = config_idx
 
-        size_layout_configs[size_key][layout_key] = config_idx
-
-    # Create sorted configuration list for binary search
     sorted_configs = []
-    for size_key, layouts in size_layout_configs.items():
-        M, N, K = size_key
-        for layout_key, config_idx in layouts.items():
-            a_layout, b_layout, c_layout = layout_key
-            sorted_configs.append((M, N, K, a_layout, b_layout, c_layout, config_idx))
+    for (M, N, K), tl_map in size_layout_configs.items():
+        for (type_group, (a_layout, b_layout, c_layout)), config_idx in tl_map.items():
+            sorted_configs.append((M, N, K, type_group, a_layout, b_layout, c_layout, config_idx))
 
-    # Sort by (M, N, K, A, B, C) for binary search
     def sort_key(x):
-        M, N, K, a_layout, b_layout, c_layout, config_idx = x
-        # Convert layouts to comparable values: row_major=0, col_major=1
-        a_val = 0 if a_layout == "row_major" else 1
-        b_val = 0 if b_layout == "row_major" else 1
-        c_val = 0 if c_layout == "row_major" else 1
-        return (M, N, K, a_val, b_val, c_val)
+        M, N, K, tg, a, b, c, _ = x
+        return (M, N, K, tg,
+                0 if a == 'row_major' else 1,
+                0 if b == 'row_major' else 1,
+                0 if c == 'row_major' else 1)
 
     sorted_configs.sort(key=sort_key)
 
@@ -128,10 +125,12 @@ namespace detail
     // Default config (last in the array)
     static constexpr size_t DEFAULT_CONFIG_IDX = KERNEL_VARIANTS - 1;
 
-    // Configuration lookup key (now includes layout_c)
+    // Configuration lookup key.
+    // type_group: 0 = f16/bf16, 1 = f32 accumulator.
     struct config_key
     {{
         size_t m, n, k;
+        size_t type_group;
         m_layout layout_a, layout_b, layout_c;
 
         constexpr bool operator<(const config_key& other) const
@@ -139,6 +138,7 @@ namespace detail
             if(m != other.m) return m < other.m;
             if(n != other.n) return n < other.n;
             if(k != other.k) return k < other.k;
+            if(type_group != other.type_group) return type_group < other.type_group;
             if(layout_a != other.layout_a) return layout_a < other.layout_a;
             if(layout_b != other.layout_b) return layout_b < other.layout_b;
             return layout_c < other.layout_c;
@@ -147,6 +147,7 @@ namespace detail
         constexpr bool operator==(const config_key& other) const
         {{
             return m == other.m && n == other.n && k == other.k &&
+                   type_group == other.type_group &&
                    layout_a == other.layout_a && layout_b == other.layout_b &&
                    layout_c == other.layout_c;
         }}
@@ -157,155 +158,116 @@ namespace detail
 """
 
     # Generate sorted config array
-    for i, (M, N, K, a_layout, b_layout, c_layout, config_idx) in enumerate(sorted_configs):
-        # Convert layout strings to enum values
+    for i, (M, N, K, type_group, a_layout, b_layout, c_layout, config_idx) in enumerate(sorted_configs):
         a_enum = f"m_layout::{a_layout}" if a_layout != "any" else "m_layout::row_major"
         b_enum = f"m_layout::{b_layout}" if b_layout != "any" else "m_layout::row_major"
         c_enum = f"m_layout::{c_layout}" if c_layout != "any" else "m_layout::row_major"
 
-        code += f"        {{{{{M}, {N}, {K}, {a_enum}, {b_enum}, {c_enum}}}, {config_idx}}}"
+        code += f"        {{{{{M}, {N}, {K}, {type_group}, {a_enum}, {b_enum}, {c_enum}}}, {config_idx}}}"
         code += "," if i < len(sorted_configs) - 1 else ""
-        code += f" // {M}x{N}x{K}, A={a_layout}, B={b_layout}, C={c_layout}\n"
+        code += f" // {M}x{N}x{K}, group={type_group}, A={a_layout}, B={b_layout}, C={c_layout}\n"
 
     code += """    }};
 
-    // Find closest configuration when exact match not found
-    // Strategy: Match K first (primary), then find closest M,N (secondary)
+    // Find closest configuration for a given type_group and layout.
+    // Strategy: closest K first, then closest M,N. Falls back to any layout if needed.
     constexpr size_t find_closest_config(size_t m, size_t n, size_t k,
+                                         size_t type_group,
                                          m_layout layout_a,
                                          m_layout layout_b,
                                          m_layout layout_c)
     {
-        // If empty, return default config
         if(sorted_config_map.empty())
         {
             return DEFAULT_CONFIG_IDX;
         }
 
-        // Euclidean distance for M,N dimensions only
         auto mn_distance = [](size_t m1, size_t n1, size_t m2, size_t n2) -> double
         {
-            double diff_m = static_cast<double>(m1) - static_cast<double>(m2);
-            double diff_n = static_cast<double>(n1) - static_cast<double>(n2);
-            return diff_m * diff_m + diff_n * diff_n;
+            double dm = static_cast<double>(m1) - static_cast<double>(m2);
+            double dn = static_cast<double>(n1) - static_cast<double>(n2);
+            return dm * dm + dn * dn;
         };
 
-        // Step 1: Find the closest K value for the matching layout
-        size_t closest_k = 0;
-        size_t min_k_diff = std::numeric_limits<size_t>::max();
-        bool found_layout_match = false;
-
-        for(size_t i = 0; i < sorted_config_map.size(); ++i)
+        auto search = [&](size_t tg) -> size_t
         {
-            const auto& entry = sorted_config_map[i];
-            const auto& key = entry.first;
-
-            // Only consider configs with matching layout
-            if(key.layout_a == layout_a && key.layout_b == layout_b && key.layout_c == layout_c)
-            {
-                found_layout_match = true;
-                size_t k_diff = (key.k > k) ? (key.k - k) : (k - key.k);
-                if(k_diff < min_k_diff)
-                {
-                    min_k_diff = k_diff;
-                    closest_k = key.k;
-                }
-            }
-        }
-
-        // If we found configs with matching layout
-        if(found_layout_match)
-        {
-            // Step 2: Among configs with closest K and matching layout, find closest M,N
-            double min_mn_distance = std::numeric_limits<double>::max();
-            size_t best_idx = DEFAULT_CONFIG_IDX;
+            size_t closest_k = 0;
+            size_t min_k_diff = std::numeric_limits<size_t>::max();
+            bool found = false;
 
             for(size_t i = 0; i < sorted_config_map.size(); ++i)
             {
-                const auto& entry = sorted_config_map[i];
-                const auto& key = entry.first;
-
-                // Only consider configs with matching layout and closest K
-                if(key.layout_a == layout_a && key.layout_b == layout_b &&
-                   key.layout_c == layout_c && key.k == closest_k)
+                const auto& key = sorted_config_map[i].first;
+                if(key.type_group == tg &&
+                   key.layout_a == layout_a && key.layout_b == layout_b && key.layout_c == layout_c)
                 {
-                    double dist = mn_distance(m, n, key.m, key.n);
-                    if(dist < min_mn_distance)
-                    {
-                        min_mn_distance = dist;
-                        best_idx = i;
-                    }
+                    found = true;
+                    size_t kd = (key.k > k) ? (key.k - k) : (k - key.k);
+                    if(kd < min_k_diff) { min_k_diff = kd; closest_k = key.k; }
                 }
             }
 
-            return sorted_config_map[best_idx].second;
-        }
+            if(!found) return DEFAULT_CONFIG_IDX;
 
-        // Fallback: No matching layout found, find closest K then M,N regardless of layout
-        closest_k = 0;
-        min_k_diff = std::numeric_limits<size_t>::max();
-
-        for(size_t i = 0; i < sorted_config_map.size(); ++i)
-        {
-            const auto& key = sorted_config_map[i].first;
-            size_t k_diff = (key.k > k) ? (key.k - k) : (k - key.k);
-            if(k_diff < min_k_diff)
+            double min_dist = std::numeric_limits<double>::max();
+            size_t best = DEFAULT_CONFIG_IDX;
+            for(size_t i = 0; i < sorted_config_map.size(); ++i)
             {
-                min_k_diff = k_diff;
-                closest_k = key.k;
-            }
-        }
-
-        // Find closest M,N among configs with closest K
-        double min_mn_distance = std::numeric_limits<double>::max();
-        size_t best_idx = DEFAULT_CONFIG_IDX;
-
-        for(size_t i = 0; i < sorted_config_map.size(); ++i)
-        {
-            const auto& entry = sorted_config_map[i];
-            const auto& key = entry.first;
-
-            if(key.k == closest_k)
-            {
-                double dist = mn_distance(m, n, key.m, key.n);
-                if(dist < min_mn_distance)
+                const auto& key = sorted_config_map[i].first;
+                if(key.type_group == tg && key.k == closest_k &&
+                   key.layout_a == layout_a && key.layout_b == layout_b && key.layout_c == layout_c)
                 {
-                    min_mn_distance = dist;
-                    best_idx = i;
+                    double d = mn_distance(m, n, key.m, key.n);
+                    if(d < min_dist) { min_dist = d; best = i; }
                 }
             }
-        }
+            return sorted_config_map[best].second;
+        };
 
-        return sorted_config_map[best_idx].second;
+        size_t result = search(type_group);
+        // Fall back to group 0 if no entries exist for requested type_group
+        if(result == DEFAULT_CONFIG_IDX && type_group != 0)
+        {
+            result = search(0);
+        }
+        return result;
     }
 
-    // Find the best configuration using binary search
+    // Find the best configuration for a given type_group using binary search.
+    // Falls back to type_group 0 (f16/bf16) when no dedicated config exists.
     constexpr size_t find_best_config(size_t m, size_t n, size_t k,
+                                      size_t type_group,
                                       m_layout layout_a,
                                       m_layout layout_b,
                                       m_layout layout_c)
     {
-        config_key target{m, n, k, layout_a, layout_b, layout_c};
-
-        // Binary search using std::lower_bound
-        auto it = std::lower_bound(
-            sorted_config_map.begin(),
-            sorted_config_map.end(),
-            std::make_pair(target, size_t(0)),
-            [](const auto& a, const auto& b)
-            {
-                return a.first < b.first;
-            }
-        );
-
-        // Check if we found an exact match
-        if(it != sorted_config_map.end() && it->first == target)
+        auto search_exact = [&](size_t tg) -> size_t
         {
-            return it->second;
+            config_key target{m, n, k, tg, layout_a, layout_b, layout_c};
+            auto it = std::lower_bound(
+                sorted_config_map.begin(), sorted_config_map.end(),
+                std::make_pair(target, size_t(0)),
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+            if(it != sorted_config_map.end() && it->first == target)
+            {
+                return it->second;
+            }
+            return DEFAULT_CONFIG_IDX;
+        };
+
+        // Exact match for requested type_group
+        size_t result = search_exact(type_group);
+        if(result != DEFAULT_CONFIG_IDX) return result;
+
+        // Exact match for fallback group 0
+        if(type_group != 0)
+        {
+            result = search_exact(0);
+            if(result != DEFAULT_CONFIG_IDX) return result;
         }
 
-        // Fall back to closest match
-        return find_closest_config(m, n, k, layout_a, layout_b, layout_c);
+        // Closest match
+        return find_closest_config(m, n, k, type_group, layout_a, layout_b, layout_c);
     }
 
 } // namespace detail
@@ -324,20 +286,19 @@ namespace detail
 constexpr gemm_params get_gemm_params(size_t m, size_t n, size_t k,
                                        m_layout layout_c,
                                        m_layout layout_a,
-                                       m_layout layout_b)
+                                       m_layout layout_b,
+                                       size_t type_group = 0)
 {
-    // Find the best configuration for this problem (now includes C layout)
-    const size_t config_idx = detail::find_best_config(m, n, k, layout_a, layout_b, layout_c);
-
-    // Get the configuration parameters
+    const size_t config_idx = detail::find_best_config(m, n, k, type_group,
+                                                        layout_a, layout_b, layout_c);
     const auto& config = detail::kernel_configs[config_idx];
     return gemm_params{
-        std::get<0>(config),  // warps_m
-        std::get<1>(config),  // warps_n
-        std::get<2>(config),  // warp_tile_m
-        std::get<3>(config),  // warp_tile_n
-        std::get<4>(config),  // swizzle
-        std::get<5>(config)   // bits
+        std::get<0>(config),
+        std::get<1>(config),
+        std::get<2>(config),
+        std::get<3>(config),
+        std::get<4>(config),
+        std::get<5>(config)
     };
 }
 
@@ -349,16 +310,16 @@ constexpr gemm_params get_gemm_params(size_t m, size_t n, size_t k,
         f.write(code)
 
 
-def generate_kernel_sources(config_file, output_dir):
-    """Generate separate source files for each (config, layout) combination from JSON"""
-    with open(config_file, 'r') as f:
-        config = json.load(f)
+def generate_kernel_sources(f16_config_file, output_dir, f32_config_file=None):
+    """Generate one source file per (config, layout) containing both aligned and unaligned variants."""
+    all_confs, _ = load_configs(f16_config_file, f32_config_file)
+    # Flatten to just (conf, _) and deduplicate on config+layout (type_group doesn't
+    # affect kernel instantiation — both groups share the same kernel_gemm_impl indices)
+    config = {'configurations': [c for c, _ in all_confs]}
 
-    # Create output directory if it doesn't exist
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Type pairs to instantiate
     type_pairs = [
         ('half', 'half'),
         ('float', 'half'),
@@ -366,17 +327,15 @@ def generate_kernel_sources(config_file, output_dir):
         ('float', '__hip_bfloat16')
     ]
 
-    # Track unique (config, layout) combinations
     seen_combinations = set()
     file_list = []
-    file_index = 0
+    file_index = 0  # Each file covers one (config, layout); aligned=file_index, unaligned=file_index+1
 
     for conf in config['configurations']:
         cfg = conf['config']
         layout = conf['layout']
         range_info = conf['range']
 
-        # Create key for this combination
         config_key = (
             cfg['warps_m'], cfg['warps_n'],
             cfg['warp_tile_m'], cfg['warp_tile_n'],
@@ -385,19 +344,23 @@ def generate_kernel_sources(config_file, output_dir):
             layout['A'], layout['B'], layout['C']
         )
 
-        # Skip if we've already generated this combination
         if config_key in seen_combinations:
             continue
         seen_combinations.add(config_key)
 
         wm, wn, wtm, wtn, swizzle_val, bits = config_key[:6]
         layout_a, layout_b, layout_c = config_key[6:]
+        layout_str = f"{layout_a[0]}{layout_b[0]}{layout_c[0]}"
+
+        # One file holds both aligned and unaligned; indices are file_index (aligned)
+        # and file_index+1 (unaligned) so the lookup table mapping is unchanged.
+        aligned_idx   = file_index
+        unaligned_idx = file_index + 1
 
         filename = f"kernel_inst_{file_index}.cpp"
         filepath = output_path / filename
         file_list.append(filename)
 
-        # Generate the source file
         code = f"""// Auto-generated kernel instantiation file - DO NOT EDIT
 // Config: warps({wm},{wn}) tiles({wtm},{wtn}) swizzle({swizzle_val}) bits({bits})
 // Layout: A={layout_a}, B={layout_b}, C={layout_c}
@@ -408,82 +371,72 @@ def generate_kernel_sources(config_file, output_dir):
 namespace rocm_wmma_gemm
 {{
 
-// Extern C getters for each type pair
 """
-
         for t_type, u_type in type_pairs:
-            # Create a mangled name for the getter
             t_name = t_type.replace('__hip_bfloat16', 'bf16').replace('half', 'f16').replace('float', 'f32')
             u_name = u_type.replace('__hip_bfloat16', 'bf16').replace('half', 'f16').replace('float', 'f32')
-            layout_str = f"{layout_a[0]}{layout_b[0]}{layout_c[0]}"  # e.g., "rrr" for A=row_major, B=row_major, C=row_major
 
-            code += f"""extern "C" void* get_kernel_inst_{file_index}_{t_name}_{u_name}_{layout_str}() {{
+            code += f"""extern "C" void* get_kernel_inst_{aligned_idx}_{t_name}_{u_name}_{layout_str}_aligned() {{
     return (void*)&kernel_gemm_impl<{t_type}, {u_type},
         m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
-        {wm}, {wn}, {wtm}, {wtn}, {swizzle_val}, {bits}>::run;
+        {wm}, {wn}, {wtm}, {wtn}, {swizzle_val}, {bits}, 1>::run;
+}}
+
+extern "C" void* get_kernel_inst_{unaligned_idx}_{t_name}_{u_name}_{layout_str}_unaligned() {{
+    return (void*)&kernel_gemm_impl<{t_type}, {u_type},
+        m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
+        {wm}, {wn}, {wtm}, {wtn}, {swizzle_val}, {bits}, 0>::run;
 }}
 
 """
 
         code += """} // namespace rocm_wmma_gemm
 """
-
         with open(filepath, 'w') as f:
             f.write(code)
 
-        file_index += 1
+        file_index += 2  # Reserve two logical indices per file (aligned + unaligned)
 
-    # Generate a file list for CMake
     filelist_path = output_path / "kernel_sources.txt"
     with open(filelist_path, 'w') as f:
         for filename in file_list:
             f.write(f"{filename}\n")
 
-    # Generate a CMake file that lists all kernel sources
     cmake_file = output_path / "kernel_sources.cmake"
     with open(cmake_file, 'w') as f:
         f.write("# Auto-generated list of kernel source files\n")
         f.write("set(KERNEL_INST_SOURCES\n")
         for filename in file_list:
-            f.write(f"    ${{CMAKE_CURRENT_BINARY_DIR}}/src/kernel_inst/{filename}\n")
+            f.write(f"    {output_path}/{filename}\n")
         f.write(")\n")
 
-    print(f"Generated {len(file_list)} kernel source files in {output_dir}")
-    print(f"Each file instantiates 1 (config, layout) × 4 type pairs = 4 kernels")
-    print(f"Total kernels: {len(file_list)} × 4 = {len(file_list) * 4}")
+    print(f"Generated {len(file_list)} kernel source files (each contains aligned + unaligned variants)")
 
-    # Generate kernel lookup file
-    generate_kernel_lookup(config_file, output_path, file_list)
+    generate_kernel_lookup(f16_config_file, output_path, file_list, f32_config_file)
 
     return file_list
 
 
-def generate_kernel_lookup(config_file, output_dir, file_list):
-    """Generate the kernel lookup implementation with static table"""
-    with open(config_file, 'r') as f:
-        config = json.load(f)
-
-    # Extract unique configurations
-    unique_configs = set()
-    for conf in config['configurations']:
+def generate_kernel_lookup(f16_config_file, output_dir, file_list, f32_config_file=None):
+    """Generate the kernel lookup implementation with static [config][type][layout][alignment] table"""
+    all_confs, unique_configs = load_configs(f16_config_file, f32_config_file)
+    # unique_configs already built by load_configs; rebuild for local use
+    unique_configs_set = set()
+    for conf, _ in all_confs:
         cfg = conf['config']
-        unique_configs.add((cfg['warps_m'], cfg['warps_n'],
-                            cfg['warp_tile_m'], cfg['warp_tile_n'],
-                            cfg['swizzle'],
-                            cfg['bits']))
+        unique_configs_set.add((cfg['warps_m'], cfg['warps_n'],
+                                cfg['warp_tile_m'], cfg['warp_tile_n'],
+                                cfg['swizzle'],
+                                cfg['bits']))
 
-    # Add default configs
-    default_configs = [
-        (4, 4, 4, 4, 8, 256)
-    ]
-    for default_config in default_configs:
-        if default_config not in unique_configs:
-            unique_configs.add(default_config)
+    default_configs = [(4, 4, 4, 4, 8, 256)]
+    for dc in default_configs:
+        if dc not in unique_configs_set:
+            unique_configs_set.add(dc)
 
-    unique_configs = sorted(list(unique_configs))
+    unique_configs = sorted(list(unique_configs_set))
     num_configs = len(unique_configs)
 
-    # Type pairs
     type_pairs = [
         ('half', 'half', 'f16', 'f16'),
         ('float', 'half', 'f32', 'f16'),
@@ -491,7 +444,6 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
         ('float', '__hip_bfloat16', 'f32', 'bf16')
     ]
 
-    # Layout combinations
     layouts = [
         ('row_major', 'row_major', 'row_major', 'rrr'),
         ('row_major', 'row_major', 'col_major', 'rrc'),
@@ -503,20 +455,19 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
         ('col_major', 'col_major', 'col_major', 'ccc'),
     ]
 
-    # Build mapping from (config_tuple, layout_tuple) -> file_index
-    config_layout_to_file = {}
+    # Build mapping from (config_tuple, layout_tuple) -> (aligned_file_idx, unaligned_file_idx)
+    config_layout_to_files = {}
     seen_combinations = set()
     file_index = 0
 
-    for conf in config['configurations']:
+    for conf, _ in all_confs:
         cfg = conf['config']
         layout = conf['layout']
 
         config_key = (
             cfg['warps_m'], cfg['warps_n'],
             cfg['warp_tile_m'], cfg['warp_tile_n'],
-            cfg['swizzle'],
-            cfg['bits'],
+            cfg['swizzle'], cfg['bits'],
             layout['A'], layout['B'], layout['C']
         )
 
@@ -526,9 +477,8 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
 
         config_tuple = config_key[:6]
         layout_tuple = (layout['A'], layout['B'], layout['C'])
-        config_layout_to_file[(config_tuple, layout_tuple)] = file_index
-
-        file_index += 1
+        config_layout_to_files[(config_tuple, layout_tuple)] = (file_index, file_index + 1)
+        file_index += 2
 
     filepath = output_dir / "kernel_lookup.cpp"
 
@@ -539,41 +489,24 @@ def generate_kernel_lookup(config_file, output_dir, file_list):
 namespace rocm_wmma_gemm
 {
 
-// Forward declare extern C getters (only those that actually exist)
 """
 
-    # Declare only the getters that actually exist
-    # Build reverse mapping: file_idx -> (config_tuple, layout_tuple)
-    file_to_config_layout = {}
-    for (config_tuple, layout_tuple), file_idx in config_layout_to_file.items():
-        file_to_config_layout[file_idx] = (config_tuple, layout_tuple)
-
-    # Declare getters only for the layouts that exist in each file
-    for file_idx in range(file_index):
-        if file_idx in file_to_config_layout:
-            _, layout_tuple = file_to_config_layout[file_idx]
-            layout_a, layout_b, layout_c = layout_tuple
-            # Find the layout_str for this layout_tuple
-            layout_str = None
-            for la, lb, lc, ls in layouts:
-                if (la, lb, lc) == layout_tuple:
-                    layout_str = ls
-                    break
-
-            if layout_str:
-                # Declare getters for all type pairs for this one layout
-                for _, _, t_name, u_name in type_pairs:
-                    code += f'extern "C" void* get_kernel_inst_{file_idx}_{t_name}_{u_name}_{layout_str}();\n'
+    # Forward declare all getters
+    for (config_tuple, layout_tuple), (aligned_idx, unaligned_idx) in config_layout_to_files.items():
+        layout_str = next(ls for la, lb, lc, ls in layouts if (la, lb, lc) == layout_tuple)
+        for _, _, t_name, u_name in type_pairs:
+            code += f'extern "C" void* get_kernel_inst_{aligned_idx}_{t_name}_{u_name}_{layout_str}_aligned();\n'
+            code += f'extern "C" void* get_kernel_inst_{unaligned_idx}_{t_name}_{u_name}_{layout_str}_unaligned();\n'
 
     code += f"""
-// Static kernel lookup table: [config_idx][type_idx][layout_idx]
+// Static kernel lookup table: [config_idx][type_idx][layout_idx][alignment_idx]
 // config_idx: 0 to {num_configs-1}
 // type_idx: 0=half-half, 1=float-half, 2=bf16-bf16, 3=float-bf16
 // layout_idx: 0=rrr, 1=rrc, 2=rcr, 3=rcc, 4=crr, 5=crc, 6=ccr, 7=ccc
-static void* kernel_table[{num_configs}][4][8] = {{
+// alignment_idx: 0=unaligned, 1=aligned
+static void* kernel_table[{num_configs}][4][8][2] = {{
 """
 
-    # Generate the table initialization
     for config_idx, config_tuple in enumerate(unique_configs):
         code += f"    // Config {config_idx}: warps({config_tuple[0]},{config_tuple[1]}) tiles({config_tuple[2]},{config_tuple[3]}) swizzle({config_tuple[4]}) bits({config_tuple[5]})\n"
         code += "    {\n"
@@ -585,16 +518,14 @@ static void* kernel_table[{num_configs}][4][8] = {{
                 layout_tuple = (layout_a, layout_b, layout_c)
                 key = (config_tuple, layout_tuple)
 
-                if key in config_layout_to_file:
-                    file_idx = config_layout_to_file[key]
-                    # Only reference the getter if this file actually provides this layout
-                    _, file_layout = file_to_config_layout[file_idx]
-                    if file_layout == layout_tuple:
-                        code += f"get_kernel_inst_{file_idx}_{t_name}_{u_name}_{layout_str}()"
-                    else:
-                        code += "nullptr"
+                code += "{"
+                if key in config_layout_to_files:
+                    aligned_idx, unaligned_idx = config_layout_to_files[key]
+                    code += f"get_kernel_inst_{unaligned_idx}_{t_name}_{u_name}_{layout_str}_unaligned(), "
+                    code += f"get_kernel_inst_{aligned_idx}_{t_name}_{u_name}_{layout_str}_aligned()"
                 else:
-                    code += "nullptr"
+                    code += "nullptr, nullptr"
+                code += "}"
 
                 if layout_idx < 7:
                     code += ", "
@@ -611,10 +542,9 @@ static void* kernel_table[{num_configs}][4][8] = {{
 
     code += """};
 
-// Simple lookup function
-void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx)
+void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx, size_t alignment_idx)
 {
-    return kernel_table[config_idx][type_idx][layout_idx];
+    return kernel_table[config_idx][type_idx][layout_idx][alignment_idx];
 }
 
 } // namespace rocm_wmma_gemm
@@ -626,117 +556,21 @@ void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx)
     print(f"Generated kernel lookup table in {filepath}")
 
 
-def generate_dispatch_table(config_file, kernel_dir, include_dir):
-    """Generate the compile-time dispatch table implementation"""
-    with open(config_file, 'r') as f:
-        config = json.load(f)
-
-    # Extract unique configurations
-    unique_configs = set()
-    for conf in config['configurations']:
-        cfg = conf['config']
-        unique_configs.add((cfg['warps_m'], cfg['warps_n'],
-                            cfg['warp_tile_m'], cfg['warp_tile_n'],
-                            cfg['swizzle'],
-                            cfg['bits']))
-
-    # Add default configs
-    default_configs = [
-        (4, 4, 4, 4, 8, 256)
-    ]
-    for default_config in default_configs:
-        if default_config not in unique_configs:
-            unique_configs.add(default_config)
-
-    # Sort configs for stable indexing
-    unique_configs = sorted(list(unique_configs))
-
-    # Generate dispatch implementation in the include directory
-    filepath = Path(include_dir) / "kernel_dispatch_impl.hpp"
-
-    code = """// Auto-generated dispatch table - DO NOT EDIT
-#ifndef ROCM_WMMA_GEMM_KERNEL_DISPATCH_IMPL_HPP
-#define ROCM_WMMA_GEMM_KERNEL_DISPATCH_IMPL_HPP
-
-#include <rocm_wmma_gemm/kernel_dispatch.hpp>
-
-namespace rocm_wmma_gemm
-{
-
-// Dispatch implementation for each type/layout combination
-"""
-
-    # Generate dispatch for each type pair and layout combination
-    type_pairs = [
-        ('half', 'half'),
-        ('float', 'half'),
-        ('__hip_bfloat16', '__hip_bfloat16'),
-        ('float', '__hip_bfloat16')
-    ]
-
-    layouts = [
-        ('row_major', 'row_major', 'row_major'),
-        ('row_major', 'row_major', 'col_major'),
-        ('row_major', 'col_major', 'row_major'),
-        ('row_major', 'col_major', 'col_major'),
-        ('col_major', 'row_major', 'row_major'),
-        ('col_major', 'row_major', 'col_major'),
-        ('col_major', 'col_major', 'row_major'),
-        ('col_major', 'col_major', 'col_major'),
-    ]
-
-    for t_type, u_type in type_pairs:
-        for layout_c, layout_a, layout_b in layouts:
-            code += f"""
-template<>
-typename kernel_dispatch<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b}>::kernel_func_ptr
-kernel_dispatch<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b}>::dispatch_by_params(
-    int warps_m, int warps_n, int warp_tile_m, int warp_tile_n, int swizzle, int bits)
-{{
-"""
-
-            # Generate if-else chain for each config
-            for i, (wm, wn, wtm, wtn, sw, b) in enumerate(unique_configs):
-                if_keyword = "if" if i == 0 else "else if"
-                code += f"""    {if_keyword}(warps_m == {wm} && warps_n == {wn} && warp_tile_m == {wtm} &&
-       warp_tile_n == {wtn} && swizzle == {sw} && bits == {b})
-    {{
-        return &kernel_gemm_impl<{t_type}, {u_type}, m_layout::{layout_c}, m_layout::{layout_a}, m_layout::{layout_b},
-                           {wm}, {wn}, {wtm}, {wtn}, {sw}, {b}>::run;
-    }}
-"""
-
-            code += """    return nullptr;
-}
-
-"""
-
-    code += """} // namespace rocm_wmma_gemm
-
-#endif // ROCM_WMMA_GEMM_KERNEL_DISPATCH_IMPL_HPP
-"""
-
-    with open(filepath, 'w') as f:
-        f.write(code)
-
-    print(f"Generated dispatch table in {filepath}")
-
-
 def main():
     parser = argparse.ArgumentParser(description='Generate WMMA GEMM configuration header and kernel sources')
-    parser.add_argument('config_file', type=str, help='Input JSON configuration file')
+    parser.add_argument('--f16-config', type=str, required=True,
+                        help='JSON config file for f16/bf16 type groups')
+    parser.add_argument('--f32-config', type=str, default=None,
+                        help='JSON config file for f32 accumulator type groups (optional)')
     parser.add_argument('output_file', type=str, help='Output header file')
     parser.add_argument('--kernel-dir', type=str, help='Output directory for kernel source files')
 
     args = parser.parse_args()
 
-    # Always generate the config header
-    generate_config_header(args.config_file, args.output_file)
+    generate_config_header(args.f16_config, args.output_file, args.f32_config)
 
-    # Generate kernel sources if directory specified
     if args.kernel_dir:
-        # Generate kernel sources
-        generate_kernel_sources(args.config_file, args.kernel_dir)
+        generate_kernel_sources(args.f16_config, args.kernel_dir, args.f32_config)
 
 
 if __name__ == '__main__':

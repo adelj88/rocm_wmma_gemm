@@ -58,18 +58,6 @@ struct wave_config : wave_config_base<warps_m, warps_n>
 };
 
 /**
- * @brief Wave configuration specialization for col-major A and row-major B.
- */
-template<int warps_m, int warps_n>
-struct wave_config<m_layout::col_major, m_layout::row_major, warps_m, warps_n>
-    : wave_config_base<warps_m, warps_n>
-{
-    using base               = wave_config_base<warps_m, warps_n>;
-    static constexpr int min = 4;
-    static constexpr int max = 8;
-};
-
-/**
  * @brief Wave configuration specialization for row-major A and col-major B.
  */
 template<int warps_m, int warps_n>
@@ -127,7 +115,8 @@ template<class T,
          int      warp_tile_m,
          int      warp_tile_n,
          int      swizzle,
-         int      bits>
+         int      bits,
+         int      is_aligned>
 __device__ __forceinline__ void gemm_impl(
     T* __restrict__ C, const U* __restrict__ A, const U* __restrict__ B, int M, int N, int K)
 {
@@ -504,7 +493,7 @@ __device__ __forceinline__ void gemm_impl(
     {
         if constexpr(is_col_major)
         {
-            load_shared_to_global<LAYOUT_C, bits, full_block, block_m, STEP>(
+            load_shared_to_global<LAYOUT_C, bits, full_block, block_m, STEP, is_aligned>(
                 C,
                 buf,
                 block_row,
@@ -515,7 +504,7 @@ __device__ __forceinline__ void gemm_impl(
         }
         else
         {
-            load_shared_to_global<LAYOUT_C, bits, full_block, STEP, block_n>(
+            load_shared_to_global<LAYOUT_C, bits, full_block, STEP, block_n, is_aligned>(
                 C,
                 buf,
                 block_row + static_cast<int>(ci) * wmma_tile,
@@ -579,7 +568,8 @@ template<class T,
          int      warp_tile_m,
          int      warp_tile_n,
          int      swizzle,
-         int      bits>
+         int      bits,
+         int      is_aligned>
 struct kernel_gemm_impl
 {
     using config = wave_config<LAYOUT_A, LAYOUT_B, warps_m, warps_n>;
@@ -606,7 +596,8 @@ struct kernel_gemm_impl
                   warp_tile_m,
                   warp_tile_n,
                   swizzle,
-                  bits>(C, A, B, M, N, K);
+                  bits,
+                  is_aligned>(C, A, B, M, N, K);
     }
 };
 

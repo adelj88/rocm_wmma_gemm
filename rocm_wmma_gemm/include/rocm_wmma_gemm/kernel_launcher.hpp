@@ -68,6 +68,8 @@ struct kernel_launcher
                        size_t       M,
                        size_t       N,
                        size_t       K,
+                       int          block_m,
+                       int          block_n,
                        dim3         grid_dim,
                        dim3         block_dim,
                        hipStream_t& stream)
@@ -108,8 +110,10 @@ struct kernel_launcher
                   ? 7
                   : 0;
 
+        const size_t alignment_idx = (M % block_m == 0 && N % block_n == 0) ? 1 : 0;
+
         // Lookup kernel function pointer from static table
-        void* kernel_ptr = lookup_kernel(config_idx, type_idx, layout_idx);
+        void* kernel_ptr = lookup_kernel(config_idx, type_idx, layout_idx, alignment_idx);
 
         // Check for null pointer (kernel not available for this config/layout combination)
         if(kernel_ptr == nullptr)

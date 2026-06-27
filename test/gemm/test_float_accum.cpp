@@ -24,7 +24,13 @@
 
 #include <common/hip_utils.hpp>
 #include <gtest/gtest.h>
-#include <rocm_wmma_gemm/gemm.hpp>
+#include <rocm_wmma_gemm/kernel_loader.hpp>
+
+inline rocm_wmma_gemm::loader& wmma_loader()
+{
+    static rocm_wmma_gemm::loader instance;
+    return instance;
+}
 #include <test.hpp>
 
 template<m_layout layout_A, m_layout layout_B, m_layout layout_C>
@@ -96,15 +102,16 @@ protected:
         HIP_CHECK(hipDeviceSynchronize());
 
         // Execute the matrix multiplication on GPU - types inferred from pointers
-        rocm_wmma_gemm::gemm<static_cast<rocm_wmma_gemm::m_layout>(LayoutT::c_layout),
-                             static_cast<rocm_wmma_gemm::m_layout>(LayoutT::a_layout),
-                             static_cast<rocm_wmma_gemm::m_layout>(LayoutT::b_layout)>(d_C,
-                                                                                       d_A,
-                                                                                       d_B,
-                                                                                       M,
-                                                                                       N,
-                                                                                       K,
-                                                                                       stream);
+        wmma_loader()
+            .gemm<static_cast<rocm_wmma_gemm::m_layout>(LayoutT::c_layout),
+                  static_cast<rocm_wmma_gemm::m_layout>(LayoutT::a_layout),
+                  static_cast<rocm_wmma_gemm::m_layout>(LayoutT::b_layout)>(d_C,
+                                                                            d_A,
+                                                                            d_B,
+                                                                            M,
+                                                                            N,
+                                                                            K,
+                                                                            stream);
         HIP_CHECK(hipPeekAtLastError());
         HIP_CHECK(hipDeviceSynchronize());
 

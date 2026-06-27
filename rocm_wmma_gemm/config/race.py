@@ -33,7 +33,7 @@ def _parse_benchmark_output(output):
             if m: return float(m.group(1))
     return None
 
-def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch):
+def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch, type_str="f16_f16"):
     """Compiles and runs the kernel configuration on the GPU ONE time, returning execution time."""
     pnames = ['warps_m', 'warps_n', 'warp_tile_m', 'warp_tile_n',
               'swizzle', 'bits']
@@ -52,7 +52,7 @@ def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch):
             str(d['warp_tile_m']), str(d['warp_tile_n']),
             str(d['swizzle']),
             str(d['bits']),
-            str(la), str(lb), str(lc), gpu_arch
+            str(la), str(lb), str(lc), gpu_arch, type_str
         ], capture_output=True, text=True, timeout=60, check=False)
         if result.returncode == 0:
             t = _parse_benchmark_output(result.stdout)
@@ -62,7 +62,7 @@ def evaluate_config_once(M, N, K, la, lb, lc, config, gpu_arch):
         pass
     return float('inf')
 
-def run_head_to_head(M, N, K, la, lb, lc, cfg1, cfg2, gpu_arch, rounds=5):
+def run_head_to_head(M, N, K, la, lb, lc, cfg1, cfg2, gpu_arch, rounds=5, type_str="f16_f16"):
     """Races cfg1 and cfg2 interleaved to handle noise. Returns winner, scores, and medians."""
     wins1 = 0
     wins2 = 0
@@ -72,11 +72,11 @@ def run_head_to_head(M, N, K, la, lb, lc, cfg1, cfg2, gpu_arch, rounds=5):
     for i in range(rounds):
         # Swap order each round to be completely fair regarding thermal throttling
         if i % 2 == 0:
-            t1 = evaluate_config_once(M, N, K, la, lb, lc, cfg1, gpu_arch)
-            t2 = evaluate_config_once(M, N, K, la, lb, lc, cfg2, gpu_arch)
+            t1 = evaluate_config_once(M, N, K, la, lb, lc, cfg1, gpu_arch, type_str)
+            t2 = evaluate_config_once(M, N, K, la, lb, lc, cfg2, gpu_arch, type_str)
         else:
-            t2 = evaluate_config_once(M, N, K, la, lb, lc, cfg2, gpu_arch)
-            t1 = evaluate_config_once(M, N, K, la, lb, lc, cfg1, gpu_arch)
+            t2 = evaluate_config_once(M, N, K, la, lb, lc, cfg2, gpu_arch, type_str)
+            t1 = evaluate_config_once(M, N, K, la, lb, lc, cfg1, gpu_arch, type_str)
 
         if t1 != float('inf'): t1_avg.append(t1)
         if t2 != float('inf'): t2_avg.append(t2)
@@ -165,6 +165,9 @@ def main():
     p.add_argument('--gpu-arch', default='gfx1100', help='GPU architecture (default: gfx1100)')
     p.add_argument('--repeats', type=int, default=5, help='Number of executions per config to find median (default: 5)')
     p.add_argument('--output', default='gemm_config_raced.json', help='Output JSON file (default: gemm_config_raced.json)')
+    p.add_argument('--type', default='f16_f16',
+                   choices=['f16_f16', 'f32_f16', 'bf16_bf16', 'f32_bf16'],
+                   help='Type pair to benchmark (default: f16_f16)')
     args = p.parse_args()
 
     data1 = load_existing_json(args.config1)
@@ -206,7 +209,7 @@ def main():
                 la, lb, lc = map(int, lk.split('_'))
 
                 print(f"\n[{sk} | A={la} B={lb} C={lc}] Configurations differ. Racing for {args.repeats} rounds...")
-                winner, wins1, wins2, m1, m2 = run_head_to_head(M, N, K, la, lb, lc, cfg1, cfg2, args.gpu_arch, args.repeats)
+                winner, wins1, wins2, m1, m2 = run_head_to_head(M, N, K, la, lb, lc, cfg1, cfg2, args.gpu_arch, args.repeats, args.type)
 
                 if m1 == float('inf') and m2 == float('inf'):
                     print("  Both configs failed!")
@@ -245,7 +248,7 @@ def main():
 
                     # Race on layout C=0
                     print(f"  Racing on layout C=0 (Row-Major Output):")
-                    winner, wins0, wins1, m0, m1 = run_head_to_head(M, N, K, la, lb, 0, cfg0, cfg1, args.gpu_arch, args.repeats)
+                    winner, wins0, wins1, m0, m1 = run_head_to_head(M, N, K, la, lb, 0, cfg0, cfg1, args.gpu_arch, args.repeats, args.type)
 
                     if winner == 1:
                         print(f"    Original Row-Major config won (Score: {wins0}-{wins1}) Median: {m0:.3f}ms vs {m1:.3f}ms")
@@ -255,7 +258,7 @@ def main():
 
                     # Race on layout C=1
                     print(f"  Racing on layout C=1 (Col-Major Output):")
-                    winner, wins0, wins1, m0, m1 = run_head_to_head(M, N, K, la, lb, 1, cfg0, cfg1, args.gpu_arch, args.repeats)
+                    winner, wins0, wins1, m0, m1 = run_head_to_head(M, N, K, la, lb, 1, cfg0, cfg1, args.gpu_arch, args.repeats, args.type)
 
                     if winner == 2:
                         print(f"    Original Col-Major config won (Score: {wins1}-{wins0}) Median: {m1:.3f}ms vs {m0:.3f}ms")

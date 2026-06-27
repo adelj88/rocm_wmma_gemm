@@ -63,10 +63,11 @@ class WMMATuner:
     MIN_SAMPLE = 8
 
     def __init__(self, max_shared_memory=65536, gpu_arch="gfx1100",
-                 random_seed=42):
+                 random_seed=42, type_str="f16_f16"):
         self.max_shared_memory = max_shared_memory
         self.gpu_arch = gpu_arch
         self.random_seed = random_seed
+        self.type_str = type_str
 
         random.seed(random_seed)
 
@@ -169,7 +170,7 @@ class WMMATuner:
                 str(d['warp_tile_m']), str(d['warp_tile_n']),
                 str(d['swizzle']),
                 str(d['bits']),
-                str(la), str(lb), str(lc), self.gpu_arch
+                str(la), str(lb), str(lc), self.gpu_arch, self.type_str
             ], capture_output=True, text=True, timeout=60, check=False)
             if result.returncode != 0:
                 return float('inf')
@@ -865,10 +866,19 @@ Examples:
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--gpu-arch', default='gfx1100')
     p.add_argument('--max-memory', type=int, default=65536)
-    p.add_argument('--output', default='gemm_config_tuned.json')
+    p.add_argument('--output', default=None,
+                   help='Output JSON path (default: gemm_config_<arch>_<typegroup>.json)')
+    p.add_argument('--type', default='f16_f16',
+                   choices=['f16_f16', 'f32_f16', 'bf16_bf16', 'f32_bf16'],
+                   help='Type pair to tune (default: f16_f16)')
     p.add_argument('--overwrite', action='store_true',
                    help='Overwrite existing configs without using them as baselines')
     args = p.parse_args()
+
+    # Derive type group suffix for default output filename
+    type_group_suffix = 'f32' if args.type in ('f32_f16', 'f32_bf16') else 'f16'
+    if args.output is None:
+        args.output = f'gemm_config_{args.gpu_arch}_{type_group_suffix}.json'
 
     existing = load_existing_json(args.input) if args.input else None
 
@@ -888,7 +898,7 @@ Examples:
           f"Budget: {args.budget}  Memory: {args.max_memory}")
     print(f"  Sizes: {len(sizes)}  Layouts: {len(layouts)}")
 
-    tuner = WMMATuner(args.max_memory, args.gpu_arch, args.seed)
+    tuner = WMMATuner(args.max_memory, args.gpu_arch, args.seed, args.type)
     results = tuner.tune_all(sizes, layouts, args.budget, existing, args.overwrite)
     merged = merge_results(existing, results)
 

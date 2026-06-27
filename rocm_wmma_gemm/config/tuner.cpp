@@ -181,11 +181,22 @@ hipFunction_t              g_kernel_func = nullptr;
 __global__ void warmup_kernel() {}
 
 // Generate kernel source code for specific configuration
-std::string generate_kernel_source(const config_params& config)
+// Map type string to (T, U) C++ type strings for hipRTC instantiation.
+// Returns {T_str, U_str} or {"half","half"} as default.
+static std::pair<std::string, std::string> type_pair_for(const std::string& type_str)
 {
+    if(type_str == "f32_f16")   return {"float",           "half"};
+    if(type_str == "bf16_bf16") return {"__hip_bfloat16",  "__hip_bfloat16"};
+    if(type_str == "f32_bf16")  return {"float",           "__hip_bfloat16"};
+    return {"half", "half"}; // default: f16_f16
+}
+
+std::string generate_kernel_source(const config_params& config, int is_aligned,
+                                   const std::string& type_str = "f16_f16")
+{
+    auto [T, U] = type_pair_for(type_str);
     std::stringstream kernel_source;
 
-    // Include the existing headers
     kernel_source << R"(
 #define std __hip_internal
 #include <kernel/kernel.hpp>
@@ -193,13 +204,13 @@ std::string generate_kernel_source(const config_params& config)
 namespace rocm_wmma_gemm
 {
 
-// Explicit instantiation of the struct static member
-template struct kernel_gemm_impl<half, half, )"
+template struct kernel_gemm_impl<)" << T << ", " << U << ", "
                   << (config.layout_c == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_a == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << (config.layout_b == 0 ? "m_layout::row_major" : "m_layout::col_major") << ", "
                   << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m << ", "
-                  << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits << R"(>;
+                  << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits << ", "
+                  << is_aligned << R"(>;
 
 } // namespace rocm_wmma_gemm
 )";
@@ -223,7 +234,7 @@ std::string read_header_file(const std::string& filepath)
 }
 
 // Compile kernel using hipRTC
-bool compile_kernel(const config_params& config)
+bool compile_kernel(const config_params& config, const std::string& type_str = "f16_f16")
 {
     // Clean up previous module if exists
     if(g_module)
@@ -233,8 +244,17 @@ bool compile_kernel(const config_params& config)
         g_kernel_func = nullptr;
     }
 
+    // Determine alignment for this config and problem size
+    const int block_m_cfg = config.warps_m * config.warp_tile_m * rocm_wmma_gemm::wmma_tile;
+    const int block_n_cfg = config.warps_n * config.warp_tile_n * rocm_wmma_gemm::wmma_tile;
+    const int is_aligned  = (g_test_data
+                              && g_test_data->M % block_m_cfg == 0
+                              && g_test_data->N % block_n_cfg == 0)
+                                 ? 1
+                                 : 0;
+
     // Generate kernel source
-    std::string kernel_source = generate_kernel_source(config);
+    std::string kernel_source = generate_kernel_source(config, is_aligned, type_str);
 
     // Read required headers
     std::vector<std::string> header_sources;
@@ -287,8 +307,9 @@ bool compile_kernel(const config_params& config)
                                      header_names.data()));
 
     // Build the full template instantiation string for name expression
+    auto [T_ns, U_ns] = type_pair_for(type_str);
     std::stringstream kernel_name_ss;
-    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm_impl<half, half, "
+    kernel_name_ss << "rocm_wmma_gemm::kernel_gemm_impl<" << T_ns << ", " << U_ns << ", "
                    << (config.layout_c == 0 ? "rocm_wmma_gemm::m_layout::row_major"
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", "
@@ -299,7 +320,7 @@ bool compile_kernel(const config_params& config)
                                             : "rocm_wmma_gemm::m_layout::col_major")
                    << ", " << config.warps_m << ", " << config.warps_n << ", " << config.warp_tile_m
                    << ", " << config.warp_tile_n << ", " << config.swizzle << ", " << config.bits
-                   << ">::run";
+                   << ", " << is_aligned << ">::run";
 
     std::string kernel_name = kernel_name_ss.str();
     std::cout << "Adding name expression: " << kernel_name << std::endl;
@@ -434,18 +455,16 @@ void run_kernel_benchmark(benchmark::State& state)
 
 int main(int argc, char* argv[])
 {
-    if(argc != 14)
+    if(argc < 14 || argc > 15)
     {
         std::cerr << "Usage: " << argv[0]
                   << " M N K warps_m warps_n warp_tile_m warp_tile_n swizzle bits "
-                     "layout_a layout_b layout_c gpu_arch"
+                     "layout_a layout_b layout_c gpu_arch [type]"
                   << std::endl;
-        std::cerr << "Example: " << argv[0] << " 4096 4096 4096 4 4 4 4 8 256 0 1 0 gfx1100"
-                  << std::endl;
+        std::cerr << "  type: f16_f16 (default), f32_f16, bf16_bf16, f32_bf16" << std::endl;
         return 1;
     }
 
-    // Parse command line arguments
     size_t M = std::atol(argv[1]);
     size_t N = std::atol(argv[2]);
     size_t K = std::atol(argv[3]);
@@ -461,12 +480,13 @@ int main(int argc, char* argv[])
     g_config.layout_c    = std::atoi(argv[12]);
     std::string tmp      = argv[13];
     g_config.gpu_arch    = "--offload-arch=" + tmp;
+    std::string type_str = (argc == 15) ? argv[14] : "f16_f16";
 
     // Initialize test data
     g_test_data = std::make_unique<test_data>(M, N, K);
 
     // Compile kernel with hipRTC
-    if(!compile_kernel(g_config))
+    if(!compile_kernel(g_config, type_str))
     {
         std::cerr << "Failed to compile kernel" << std::endl;
         return 1;

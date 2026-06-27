@@ -38,7 +38,7 @@ namespace rocm_wmma_gemm
  * @param layout_idx Layout combination index (0=rrr, 1=rrc, 2=rcr, 3=rcc, 4=crr, 5=crc, 6=ccr, 7=ccc).
  * @return void* Pointer to the matching kernel function, or nullptr if not available.
  */
-void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx);
+void* lookup_kernel(size_t config_idx, size_t type_idx, size_t layout_idx, size_t alignment_idx);
 
 } // namespace rocm_wmma_gemm
 

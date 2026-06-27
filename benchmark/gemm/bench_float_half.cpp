@@ -24,7 +24,13 @@
 
 #include <bench.hpp>
 #include <iomanip>
-#include <rocm_wmma_gemm/gemm.hpp>
+#include <rocm_wmma_gemm/kernel_loader.hpp>
+
+inline rocm_wmma_gemm::loader& wmma_loader()
+{
+    static rocm_wmma_gemm::loader instance;
+    return instance;
+}
 #include <sstream>
 #include <string>
 
@@ -75,16 +81,17 @@ void run_benchmark(benchmark::State& state, size_t M, size_t N, size_t K, size_t
     for(auto _ : state)
     {
         timer.start(stream);
-        rocm_wmma_gemm::gemm<static_cast<rocm_wmma_gemm::m_layout>(c_layout),
-                             static_cast<rocm_wmma_gemm::m_layout>(a_layout),
-                             static_cast<rocm_wmma_gemm::m_layout>(b_layout)>(d_C,
-                                                                              d_A,
-                                                                              d_B,
-                                                                              M,
-                                                                              N,
-                                                                              K,
-                                                                              batch_count,
-                                                                              stream);
+        wmma_loader()
+            .gemm<static_cast<rocm_wmma_gemm::m_layout>(c_layout),
+                  static_cast<rocm_wmma_gemm::m_layout>(a_layout),
+                  static_cast<rocm_wmma_gemm::m_layout>(b_layout)>(d_C,
+                                                                   d_A,
+                                                                   d_B,
+                                                                   M,
+                                                                   N,
+                                                                   K,
+                                                                   batch_count,
+                                                                   stream);
         HIP_CHECK(hipPeekAtLastError());
         double elapsed_time = timer.stop(stream);
 
